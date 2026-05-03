@@ -26,16 +26,12 @@
 
 open Types
 
-(* ------------------------------------------------------------------ *)
-(*  Core type                                                           *)
-(* ------------------------------------------------------------------ *)
+(* Core type *)
 
 (** A prompt computation that emits messages and returns ['a]. *)
 type 'a t = unit -> 'a * chat_message list
 
-(* ------------------------------------------------------------------ *)
-(*  Monad primitives                                                    *)
-(* ------------------------------------------------------------------ *)
+(* Monad primitives *)
 
 (** Lift a pure value.  Emits no messages. *)
 let return x () = (x, [])
@@ -56,9 +52,7 @@ let map f m () =
 
 let (>|=) m f = map f m
 
-(* ------------------------------------------------------------------ *)
-(*  Writer primitives                                                   *)
-(* ------------------------------------------------------------------ *)
+(* Writer primitives *)
 
 (** Emit a single message into the log. *)
 let tell msg () = ((), [msg])
@@ -66,9 +60,7 @@ let tell msg () = ((), [msg])
 (** Emit multiple messages at once. *)
 let tell_all msgs () = ((), msgs)
 
-(* ------------------------------------------------------------------ *)
-(*  Message constructors                                                *)
-(* ------------------------------------------------------------------ *)
+(* Message constructors *)
 
 (** Append a [System] message. *)
 let system content = tell (system_msg content)
@@ -103,9 +95,7 @@ let many xs f =
     f x
   ) (return ()) xs
 
-(* ------------------------------------------------------------------ *)
-(*  Execution                                                            *)
-(* ------------------------------------------------------------------ *)
+(* Execution *)
 
 (** [exec p] runs the prompt computation and returns the accumulated
     [chat_message list].  This is the boundary where the pure description

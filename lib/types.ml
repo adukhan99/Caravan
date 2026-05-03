@@ -36,9 +36,7 @@ let role_of_string s =
 let ( >>= ) r f = Result.bind r f
 let ( >|= ) r f = Result.map f r
 
-(* ------------------------------------------------------------------ *)
-(*  Refined message ADT                                                 *)
-(* ------------------------------------------------------------------ *)
+(* Refined message ADT *)
 
 (** A tool call requested by an assistant turn. *)
 type tool_call = {
@@ -60,9 +58,7 @@ type chat_message = {
   tool_calls : tool_call list option;
 }
 
-(* ------------------------------------------------------------------ *)
-(*  Smart constructors (enforce role/field invariants)                  *)
-(* ------------------------------------------------------------------ *)
+(* Smart constructors (enforce role/field invariants) *)
 
 let make_message ?tool_calls role content = {
   role;
@@ -85,9 +81,7 @@ let assistant_tool_msg ~tool_calls content =
     [call_id] carries the id of the tool call being answered. *)
 let tool_msg call_id content = make_message (Tool call_id) content
 
-(* ------------------------------------------------------------------ *)
-(*  JSON serialisation                                                   *)
-(* ------------------------------------------------------------------ *)
+(* JSON serialisation *)
 
 let tool_call_to_json tc =
   `Assoc [
@@ -174,9 +168,7 @@ let chat_message_of_json json =
 let messages_to_json msgs =
   `List (List.map chat_message_to_json msgs)
 
-(* ------------------------------------------------------------------ *)
-(*  Metadata wrapper                                                    *)
-(* ------------------------------------------------------------------ *)
+(* Metadata wrapper *)
 
 (** Structured result type wrapping a value with metadata. *)
 type 'a result_with_meta = {

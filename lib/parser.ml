@@ -9,7 +9,7 @@ type 'a parse_result = ('a, string) result
 (** A parser is simply a function from string to a typed result. *)
 type 'a t = string -> 'a parse_result
 
-(** --- Monad / Functor combinators --- *)
+(* Monad / Functor combinators *)
 
 let map f p s = Result.map f (p s)
 
@@ -30,7 +30,7 @@ let or_else p1 p2 s = match p1 s with
 
 let (<|>) = or_else
 
-(** --- Applicative --- *)
+(* Applicative *)
 
 (** [ap pf pa] applies a parser of functions to a parser of values,
     both fed the *same* input string.  This is the standard Applicative
@@ -65,7 +65,7 @@ let product pa pb =
   (a, b)
 
 
-(** --- Base parsers --- *)
+(* Base parsers *)
 
 (** [string] passes through the raw LLM output unchanged. *)
 let string : string t = fun s -> return s s

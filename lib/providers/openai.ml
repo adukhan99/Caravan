@@ -38,9 +38,7 @@ let make_config
   in
   { base_url; api_key; model; options; org_id = load_org_id () }
 
-(* ------------------------------------------------------------------
-   Helpers
-   ------------------------------------------------------------------ *)
+(* Helpers *)
 
 let options_to_json_fields (o : gen_options) =
   let opt key f = function None -> [] | Some v -> [(key, f v)] in
@@ -53,17 +51,11 @@ let options_to_json_fields (o : gen_options) =
      else [("stop", `List (List.map (fun s -> `String s) o.stop))]);
   ]
 
-(** Delegates to [chat_message_to_json] which already handles:
-    - [tool_calls] on Assistant messages
-    - ["role"] = "tool" + ["tool_call_id"] on Tool messages
-    - null [content] when tool_calls are present *)
-let msg_to_openai_json msg = OrchCaml.Types.chat_message_to_json msg
-
 let make_body cfg ?tools msgs ~stream =
   let base_fields = List.concat [
     [
       ("model",    `String cfg.model);
-      ("messages", `List (List.map msg_to_openai_json msgs));
+      ("messages", messages_to_json msgs);
       ("stream",   `Bool stream);
     ];
     options_to_json_fields cfg.options;

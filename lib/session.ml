@@ -60,9 +60,7 @@ let clear sess =
 (** [history sess] returns the current message history. *)
 let history sess = Memory.Buffer.get sess.memory
 
-(* ------------------------------------------------------------------ *)
-(*  Shared helpers                                                      *)
-(* ------------------------------------------------------------------ *)
+(* Shared helpers *)
 
 (** Build the full message list to send to the LLM, prepending the
     system prompt if it is not already the first message. *)
@@ -117,9 +115,7 @@ let run_turn_step sess (reply : chat_message) =
   | _ ->
     Lwt.return (Done (new_sess, reply.content))
 
-(* ------------------------------------------------------------------ *)
-(*  Non-streaming conversation loop                                     *)
-(* ------------------------------------------------------------------ *)
+(* Non-streaming conversation loop *)
 
 let rec run_conversations sess =
   let open Lwt.Syntax in
@@ -136,9 +132,7 @@ let turn sess user_input =
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
   run_conversations sess'
 
-(* ------------------------------------------------------------------ *)
-(*  Streaming conversation loop                                         *)
-(* ------------------------------------------------------------------ *)
+(* Streaming conversation loop *)
 
 let rec run_conversations_stream sess ~on_token =
   let open Lwt.Syntax in
@@ -178,5 +172,3 @@ let pp_history fmt sess =
     let role_str = role_to_string msg.role in
     Format.fprintf fmt "@[<v>[%s]: %s@]@." role_str msg.content
   ) (Memory.Buffer.get sess.memory)
-mory)
-ry)

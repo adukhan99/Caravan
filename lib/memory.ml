@@ -36,7 +36,7 @@ module type MEMORY = sig
   val of_json : Yojson.Safe.t -> t
 end
 
-(** --- Buffer Memory --- *)
+(* Buffer Memory *)
 
 (** Purely functional deque — two-list representation.
     - [front]: oldest messages, in order oldest→newest.
@@ -106,7 +106,7 @@ end = struct
     List.fold_left add mem msgs
 end
 
-(** --- No-op Memory --- *)
+(* No-op Memory *)
 
 (** Stateless — every call sees an empty history. *)
 module Noop : MEMORY = struct

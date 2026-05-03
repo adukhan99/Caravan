@@ -15,9 +15,7 @@ open OrchCaml
 open OrchCaml.Types
 open OrchCaml.Config
 
-(* ────────────────────────────────────────────────────────────────────────────
-   ANSI colour helpers
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* ANSI colour helpers *)
 
 let ansi code s = Printf.sprintf "\027[%sm%s\027[0m" code s
 let bold s    = ansi "1" s
@@ -43,9 +41,7 @@ let print_ansi s = if is_tty then print_string s else
 
 let println_ansi s = print_ansi s; print_char '\n'
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Banner
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Banner *)
 
 let print_banner () =
   if is_tty then begin
@@ -55,9 +51,7 @@ let print_banner () =
     print_newline ()
   end
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Slash command help
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Slash command help *)
 
 let get_available_tools () =
   let tools_dir = "lib/tools" in
@@ -112,9 +106,7 @@ let print_help () =
   ) cmds;
   print_newline ()
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Provider construction helpers
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Provider construction helpers *)
 
 let make_ollama_provider model =
   OrchCamlProviders.Ollama.make_provider ~model ()
@@ -122,9 +114,7 @@ let make_ollama_provider model =
 let make_openai_provider ?base_url model =
   OrchCamlProviders.Openai.make_provider ?base_url ~model ()
 
-(* ────────────────────────────────────────────────────────────────────────────
-   REPL state
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* REPL state *)
 
 type repl_state = {
   mutable session  : Session.t;
@@ -155,17 +145,13 @@ let rebuild_session st =
   st.provider <- provider;
   st.session  <- Session.create ~tools:all_tools st.model provider
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Token streaming callback — prints with colour, no newline
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Token streaming callback *)
 
 let on_token token =
   print_ansi (green token);
   flush stdout
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Slash command handler
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Slash command handler *)
 
 let handle_slash_command st line =
   let open Lwt.Syntax in
@@ -309,9 +295,7 @@ let handle_slash_command st line =
 
   | [] -> Lwt.return_unit
 
-(* ────────────────────────────────────────────────────────────────────────────
-   The main REPL loop
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* The main REPL loop *)
 
 let repl st =
   let open Lwt.Syntax in
@@ -362,9 +346,7 @@ let repl st =
   in
   loop ()
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Subcommands
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Subcommands *)
 
 (** [cmd_complete] — single non-interactive completion. *)
 let cmd_complete ~model ~use_openai ~openai_base ~system prompt_text =
@@ -409,9 +391,7 @@ let cmd_models ~use_openai ~openai_base ~model () =
       Printf.eprintf "[OrchCaml] Error: %s\n%!" msg;
       exit 1)
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Cmdliner CLI setup
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Cmdliner CLI setup *)
 
 open Cmdliner
 

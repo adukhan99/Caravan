@@ -9,9 +9,7 @@
 open OrchCaml.Types
 open OrchCaml.Provider
 
-(* ------------------------------------------------------------------
-   Config type — defined outside the functor so make_config is accessible
-   ------------------------------------------------------------------ *)
+(* Config type *)
 
 type config = {
   host    : string;
@@ -30,9 +28,7 @@ let make_config
     () =
   { host; port; model; options; timeout }
 
-(* ------------------------------------------------------------------
-   Helpers (shared between complete and stream)
-   ------------------------------------------------------------------ *)
+(* Helpers *)
 
 let base_url cfg =
   Printf.sprintf "http://%s:%d" cfg.host cfg.port

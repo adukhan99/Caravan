@@ -73,7 +73,7 @@ let tap_pure (f : 'b -> unit) : ('b, string) result -> ('b, string) result Lwt.t
     f v;
     Lwt.return (Ok v)
 
-(** --- Prompt steps --- *)
+(* Prompt steps *)
 
 (** [prompt_template tmpl_str] compiles and renders a template string.
     Input: a variable list [(name, value)].
@@ -94,7 +94,7 @@ let prompt_messages ?system tmpl_str
 let just_messages msgs : unit -> (chat_message list, string) result Lwt.t =
   fun () -> Lwt.return (Ok msgs)
 
-(** --- LLM steps --- *)
+(* LLM steps *)
 
 (** [llm provider] calls the provider and returns the assistant's content. *)
 let llm (provider : Provider.packed_provider) : chat_message list -> (string, string) result Lwt.t =
@@ -136,14 +136,14 @@ let llm_stream (provider : Provider.packed_provider)
         Ok (Buffer.contents buf))
       (fun exn -> Lwt.return (Error (Printexc.to_string exn)))
 
-(** --- Parse steps --- *)
+(* Parse steps *)
 
 (** [parse p] applies parser [p] to the LLM's string output.
     Returns [Error] if the parser fails — no exceptions raised. *)
 let parse (p : 'a Parser.t) : string -> ('a, string) result Lwt.t =
   fun s -> Lwt.return (p s)
 
-(** --- Memory-aware chain helpers --- *)
+(* Memory-aware chain helpers *)
 
 (** [with_memory (module M) mem chain] wraps [chain] so that each call:
     1. Prepends memory history to the input messages.

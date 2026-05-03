@@ -121,7 +121,7 @@ module Noop : MEMORY = struct
   let of_json _ = ()
 end
 
-(** --- Summary Memory --- *)
+(* Summary Memory *)
 
 (** When the buffer exceeds [max_messages], older messages are summarised
     into a single System message using an LLM call. *)

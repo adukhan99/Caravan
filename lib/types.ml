@@ -190,9 +190,7 @@ type 'a result_with_meta = {
 let wrap_result ~raw_response ~model ~provider ?finish_reason value =
   { value; raw_response; model; provider; finish_reason }
 
-(* ------------------------------------------------------------------ *)
-(*  Generation options                                                  *)
-(* ------------------------------------------------------------------ *)
+(* Generation options *)
 
 type gen_options = {
   temperature  : float option;
@@ -215,3 +213,4 @@ let default_options = {
 let options
     ?temperature ?top_p ?top_k ?max_tokens ?(stop=[]) ?seed () =
   { temperature; top_p; top_k; max_tokens; stop; seed }
+

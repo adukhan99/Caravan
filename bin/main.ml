@@ -502,9 +502,7 @@ let models_cmd =
   let info = Cmd.info "models" ~doc in
   Cmd.v info Term.(const run $ model_arg $ provider_arg $ openai_base_arg)
 
-(* ────────────────────────────────────────────────────────────────────────────
-   Entry point
-   ──────────────────────────────────────────────────────────────────────────── *)
+(* Entry point *)
 
 let () =
   let doc = "A typed LLM orchestration framework and interactive REPL." in

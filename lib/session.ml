@@ -160,9 +160,7 @@ let turn_stream sess user_input ~on_token =
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
   run_conversations_stream sess' ~on_token
 
-(* ------------------------------------------------------------------ *)
-(*  Export / pretty-print                                               *)
-(* ------------------------------------------------------------------ *)
+(* Export / pretty-print *)
 
 (** Serialise the session history to JSON. *)
 let export_json sess =
@@ -180,3 +178,5 @@ let pp_history fmt sess =
     let role_str = role_to_string msg.role in
     Format.fprintf fmt "@[<v>[%s]: %s@]@." role_str msg.content
   ) (Memory.Buffer.get sess.memory)
+mory)
+ry)

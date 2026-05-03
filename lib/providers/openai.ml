@@ -11,29 +11,19 @@ open OrchCaml.Types
 open OrchCaml.Provider
 open OrchCaml.Config
 
-(* ------------------------------------------------------------------
-   API key loading
-   (* API_KEY_SOURCE: modify load_api_key_from_env to change key sources *)
-   ------------------------------------------------------------------ *)
-
 let load_api_key_from_env () =
   match get_string_opt (Some "OPENAI_API_KEY") "openai_api_key" with
   | Some k -> k
   | None -> failwith "OPENAI_API_KEY not found in env or ~/.orchcaml/config.toml"
 
-(** (* API_KEY_SOURCE: env OPENAI_ORG_ID *) *)
 let load_org_id () = Sys.getenv_opt "OPENAI_ORG_ID"
-
-(* ------------------------------------------------------------------
-   Config type
-   ------------------------------------------------------------------ *)
 
 type config = {
   base_url : string;
-  api_key  : string;   (** (* API_KEY_SOURCE *) *)
+  api_key  : string;
   model    : string;
   options  : gen_options;
-  org_id   : string option;  (** (* API_KEY_SOURCE: env OPENAI_ORG_ID *) *)
+  org_id   : string option;
 }
 
 let make_config
@@ -129,10 +119,6 @@ let parse_complete_response body_str model =
   in
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish reply_msg
-
-(* ------------------------------------------------------------------
-   PROVIDER module
-   ------------------------------------------------------------------ *)
 
 module Openai = struct
   type nonrec config = config

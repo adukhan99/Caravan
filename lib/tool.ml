@@ -1,9 +1,7 @@
 (** OrchCaml.Tool — Formal module signature for tools.
 
-    This module defines the architectural requirement for Tools
-    as mandated by the OrchCaml architectural guidelines.
-    It replaces implicit "duck typing" of tool calls with a strict signature
-    ensuring type safety, composability, and discoverability.
+    Defines the signature for Tools to ensure type safety,
+    composability, and discoverability within the framework.
 *)
 
 module type TOOL = sig

@@ -169,7 +169,7 @@ let with_memory
         Lwt.return (Ok (final_mem, result.value.content)))
       (fun exn -> Lwt.return (Error (Printexc.to_string exn)))
 
-(** --- Sequence combinators --- *)
+(* Sequence combinators *)
 
 (** [sequence chains] runs a list of chains in order, threading the
     value through each one. Short-circuits on the first [Error]. *)

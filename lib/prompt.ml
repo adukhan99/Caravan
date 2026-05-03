@@ -82,9 +82,7 @@ let assistant content = tell (assistant_msg content)
 (** Append a [Tool] result message. *)
 let tool_result id content = tell (tool_msg id content)
 
-(* ------------------------------------------------------------------ *)
-(*  Conditional / combinatorial helpers                                 *)
-(* ------------------------------------------------------------------ *)
+(* Conditional / combinatorial helpers *)
 
 (** [when_ cond p] runs [p] only when [cond] is [true]. *)
 let when_ cond p = if cond then p else return ()

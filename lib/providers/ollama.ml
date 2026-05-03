@@ -106,10 +106,6 @@ let parse_complete_response body_str model =
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"ollama" ?finish_reason:finish reply_msg
 
-(* ------------------------------------------------------------------
-   PROVIDER module — constrained to the signature after definition
-   ------------------------------------------------------------------ *)
-
 module Ollama = struct
   type nonrec config = config
 

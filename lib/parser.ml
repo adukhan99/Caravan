@@ -206,7 +206,7 @@ let json_array_strings : string list t =
 
 
 
-(** --- Running parsers --- *)
+(* Running parsers *)
 
 (** [run p s] applies parser [p] to string [s]. *)
 let run p s = p s

@@ -159,7 +159,8 @@ module Ollama = struct
               (try
                 let json = Yojson.Safe.from_string line in
                 let open Yojson.Safe.Util in
-                let token = json |> member "message" |> member "content" |> to_string in
+                let msg_json = json |> member "message" in
+                let token = msg_json |> member "content" |> to_string in
                 Buffer.add_string buf token;
                 safe_push (Some token);
                 let done_ = json |> member "done" |> to_bool in
@@ -167,9 +168,22 @@ module Ollama = struct
                   safe_push None;
                   let full   = Buffer.contents buf in
                   let finish = json |> member "done_reason" |> to_string_option in
+                  let tool_calls =
+                    match msg_json |> member "tool_calls" with
+                    | `Null -> None
+                    | `List l ->
+                      Some (List.map (fun tc ->
+                        let func = tc |> member "function" in
+                        let name = func |> member "name" |> to_string in
+                        let args = func |> member "arguments" |> Yojson.Safe.to_string in
+                        OrchCaml.Types.{ id = "call_" ^ name; name; args }
+                      ) l)
+                    | _ -> None
+                  in
+                  let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
                   Lwt.wakeup meta_resolver
                     (wrap_result ~raw_response:full ~model:cfg.model
-                       ~provider:"ollama" ?finish_reason:finish (OrchCaml.Types.assistant_msg full))
+                       ~provider:"ollama" ?finish_reason:finish reply)
                 end
               with exn -> 
                 Printf.eprintf "[Ollama Stream Parse Error]: %s\nLine: %s\n%!" (Printexc.to_string exn) line)

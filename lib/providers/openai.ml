@@ -63,11 +63,11 @@ let options_to_json_fields (o : gen_options) =
      else [("stop", `List (List.map (fun s -> `String s) o.stop))]);
   ]
 
-let msg_to_openai_json msg =
-  `Assoc [
-    ("role",    `String (role_to_string msg.role));
-    ("content", `String msg.content);
-  ]
+(** Delegates to [chat_message_to_json] which already handles:
+    - [tool_calls] on Assistant messages
+    - ["role"] = "tool" + ["tool_call_id"] on Tool messages
+    - null [content] when tool_calls are present *)
+let msg_to_openai_json msg = OrchCaml.Types.chat_message_to_json msg
 
 let make_body cfg ?tools msgs ~stream =
   let base_fields = List.concat [
@@ -163,6 +163,8 @@ module Openai = struct
     let safe_push v = try token_push v with Lwt_stream.Closed -> () in
     let meta_promise, meta_resolver = Lwt.wait () in
     let buf = Buffer.create 4096 in
+    (* Accumulate tool_call deltas: index -> (id, name, args_buf) *)
+    let tool_acc : (int, string * string * Buffer.t) Hashtbl.t = Hashtbl.create 4 in
     let run () =
       let open Lwt.Syntax in
       let* (resp, body_lwt) =
@@ -187,35 +189,85 @@ module Openai = struct
               let data = String.sub line 6 (String.length line - 6) in
               if data = "[DONE]" then begin
                 safe_push None;
-                  let full = Buffer.contents buf in
-                  Lwt.wakeup meta_resolver
-                    (wrap_result ~raw_response:full ~model:cfg.model
-                       ~provider:"openai" (OrchCaml.Types.assistant_msg full))
+                let full = Buffer.contents buf in
+                let tool_calls =
+                  if Hashtbl.length tool_acc = 0 then None
+                  else begin
+                    let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
+                    let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
+                    Some (List.map (fun (_, (id, name, abuf)) ->
+                      OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
+                    ) sorted)
+                  end
+                in
+                let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+                Lwt.wakeup meta_resolver
+                  (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" reply)
               end else begin
                 (try
                   let json = Yojson.Safe.from_string data in
                   let open Yojson.Safe.Util in
-                  let delta =
-                    json |> member "choices" |> index 0
-                    |> member "delta" |> member "content"
-                  in
-                  (match delta with
+                  let delta = json |> member "choices" |> index 0 |> member "delta" in
+                  (* Accumulate content *)
+                  (match delta |> member "content" with
                    | `String token ->
                      Buffer.add_string buf token;
                      safe_push (Some token)
+                   | _ -> ());
+                  (* Accumulate tool_calls deltas *)
+                  (match delta |> member "tool_calls" with
+                   | `List tcs ->
+                     List.iter (fun tc ->
+                       let idx = tc |> member "index" |> to_int in
+                       let (id, name, abuf) =
+                         match Hashtbl.find_opt tool_acc idx with
+                         | Some existing -> existing
+                         | None ->
+                           let entry = ("", "", Buffer.create 64) in
+                           Hashtbl.add tool_acc idx entry;
+                           entry
+                       in
+                       let new_id =
+                         match tc |> member "id" with
+                         | `String s when s <> "" -> s
+                         | _ -> id
+                       in
+                       let fn = tc |> member "function" in
+                       let new_name =
+                         match fn |> member "name" with
+                         | `String s when s <> "" -> s
+                         | _ -> name
+                       in
+                       (match fn |> member "arguments" with
+                        | `String s -> Buffer.add_string abuf s
+                        | _ -> ());
+                       Hashtbl.replace tool_acc idx (new_id, new_name, abuf)
+                     ) tcs
                    | _ -> ())
-                with exn -> 
-                  Printf.eprintf "[OpenAI Stream Parse Error]: %s\nData: %s\n%!" (Printexc.to_string exn) data)
+                with exn ->
+                  Printf.eprintf "[OpenAI Stream Parse Error]: %s\nData: %s\n%!"
+                    (Printexc.to_string exn) data)
               end
             end
           ) lines
         ) body_stream in
         safe_push None;
-        (if Lwt.is_sleeping meta_promise then
+        (if Lwt.is_sleeping meta_promise then begin
+          let full = Buffer.contents buf in
+          let tool_calls =
+            if Hashtbl.length tool_acc = 0 then None
+            else begin
+              let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
+              let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
+              Some (List.map (fun (_, (id, name, abuf)) ->
+                OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
+              ) sorted)
+            end
+          in
+          let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
           Lwt.wakeup meta_resolver
-            (wrap_result ~raw_response:(Buffer.contents buf)
-               ~model:cfg.model ~provider:"openai"
-               (OrchCaml.Types.assistant_msg (Buffer.contents buf))));
+            (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" reply)
+        end);
         Lwt.return_unit
       end
     in

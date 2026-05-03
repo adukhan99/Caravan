@@ -33,5 +33,6 @@ module Read_file : Tool.TOOL with type input = string and type output = (string,
       let s = really_input_string ch (in_channel_length ch) in
       close_in ch;
       Ok s
-    with Sys_error msg -> Error ("Failed to read file: " ^ msg)
+    with Sys_error msg ->
+      Error (Printf.sprintf "Failed to read file: %s (cwd: %s)" msg (Sys.getcwd ()))
 end

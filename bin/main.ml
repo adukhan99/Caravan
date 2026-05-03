@@ -137,6 +137,7 @@ type repl_state = {
 
 let all_tools : OrchCaml.Tool.packed_tool list = [
   Tool (module OrchCamlTools.Grep.Grep);
+  Tool (module OrchCamlTools.Ls.Ls);
   Tool (module OrchCamlTools.Mkdir.Mkdir);
   Tool (module OrchCamlTools.Read_file.Read_file);
   Tool (module OrchCamlTools.Sed.Sed);
@@ -338,12 +339,24 @@ let repl st =
       (* Print assistant label *)
       if is_tty then
         println_ansi (Printf.sprintf "\n%s" (bold (green "Assistant:")));
-      (* Stream response *)
-      let* (new_sess, response) = Session.turn_stream st.session line ~on_token in
-      st.session <- new_sess;
-      if is_tty then print_newline ();
-      (* If not a TTY (piped), print the full response after *)
-      if not is_tty then print_endline response;
+      (* Stream response — catch provider errors so the REPL survives 4xx/5xx *)
+      let* () =
+        Lwt.catch
+          (fun () ->
+            let* (new_sess, response) = Session.turn_stream st.session line ~on_token in
+            st.session <- new_sess;
+            if is_tty then print_newline ();
+            if not is_tty then print_endline response;
+            Lwt.return_unit)
+          (fun exn ->
+            if is_tty then print_newline ();
+            let msg = match exn with
+              | Failure s -> s
+              | _ -> Printexc.to_string exn
+            in
+            println_ansi (red (Printf.sprintf "\n  [Error]: %s" msg));
+            Lwt.return_unit)
+      in
       loop ()
     end
   in

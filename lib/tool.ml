@@ -48,22 +48,24 @@ let description_of_packed (Tool (module T)) = T.description
 let schema_of_packed (Tool (module T)) = T.json_schema ()
 
 let dispatch (Tool (module T)) (args_json : string) : string Lwt.t =
-  let json =
-    try Yojson.Safe.from_string args_json
-    with _ -> `Null
-  in
-  match T.parse_args json with
-  | Error err -> Lwt.return (Printf.sprintf "Error parsing arguments: %s" err)
-  | Ok input ->
-      let output =
-        Effect.Deep.try_with
-          (fun () -> Effect.perform (T.Exec input))
-          ()
-          { effc = fun (type a) (eff : a Effect.t) ->
-              match eff with
-              | T.Exec i -> Some (fun (k : (a, _) Effect.Deep.continuation) ->
-                  Effect.Deep.continue k (T.execute i))
-              | _ -> None
-          }
-      in
-      Lwt.return (T.format_output output)
+  match Yojson.Safe.from_string args_json with
+  | exception _ ->
+    Lwt.return (Printf.sprintf
+      "Error: could not parse tool arguments as JSON. \
+       Received: %s. Please provide valid JSON matching the schema." args_json)
+  | json ->
+    match T.parse_args json with
+    | Error err -> Lwt.return (Printf.sprintf "Error parsing arguments: %s" err)
+    | Ok input ->
+        let output =
+          Effect.Deep.try_with
+            (fun () -> Effect.perform (T.Exec input))
+            ()
+            { effc = fun (type a) (eff : a Effect.t) ->
+                match eff with
+                | T.Exec i -> Some (fun (k : (a, _) Effect.Deep.continuation) ->
+                    Effect.Deep.continue k (T.execute i))
+                | _ -> None
+            }
+        in
+        Lwt.return (T.format_output output)

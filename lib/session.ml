@@ -83,9 +83,13 @@ let execute_tool_calls sess tcs =
   Lwt_list.map_s (fun tc ->
     match List.find_opt (fun t -> Tool.name_of_packed t = tc.name) sess.tools with
     | None ->
-      Lwt.return (tool_msg tc.id (Printf.sprintf "Tool %s not found" tc.name))
+      let msg = Printf.sprintf "Tool '%s' not found in registered tools." tc.name in
+      Printf.eprintf "[Tool]: %s → NOT FOUND\n%!" tc.name;
+      Lwt.return (tool_msg tc.id msg)
     | Some packed ->
+      Printf.eprintf "[Tool]: %s(%s)\n%!" tc.name tc.args;
       let* output_str = Tool.dispatch packed tc.args in
+      Printf.eprintf "[Tool Result]: %s\n%!" output_str;
       Lwt.return (tool_msg tc.id output_str)
   ) tcs
 

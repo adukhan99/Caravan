@@ -22,11 +22,11 @@
   ocaml
   (dune
    (>= 3.21))
-  (lwt
-   (>= 6.0))
-  (lwt_ppx
-   (>= 2.0))
-  (cohttp-lwt-unix
+  (eio
+   (>= 1.0))
+  (eio_main
+   (>= 1.0))
+  (cohttp-eio
    (>= 6.0))
   (uri
    (>= 4.0))

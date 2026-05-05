@@ -3,7 +3,10 @@
     A [session] combines:
     - a [Provider.packed_provider] (the LLM backend),
     - a [Memory.Buffer.t] (conversation history),
-    - metadata (model name, system prompt, generation options). *)
+    - metadata (model name, system prompt, generation options).
+
+    All functions are direct-style (no Lwt.t). The Eio [net] capability
+    is passed explicitly to functions that perform I/O. *)
 
 open Types
 
@@ -73,22 +76,20 @@ let history_for_llm sess =
      | { role = System; _ } :: _ -> Memory.Buffer.get sess.memory
      | rest -> sm :: rest)
 
-(** [execute_tool_calls sess tcs] dispatches all requested tool calls in
-    parallel-sequential order (Lwt_list.map_s) and returns the resulting
-    [Tool] messages. *)
-let execute_tool_calls sess tcs =
-  let open Lwt.Syntax in
-  Lwt_list.map_s (fun tc ->
+(** [execute_tool_calls net sess tcs] dispatches all requested tool calls and
+    returns the resulting [Tool] messages. *)
+let execute_tool_calls _net sess tcs =
+  List.map (fun tc ->
     match List.find_opt (fun t -> Tool.name_of_packed t = tc.name) sess.tools with
     | None ->
       let msg = Printf.sprintf "Tool '%s' not found in registered tools." tc.name in
       Printf.eprintf "[Tool]: %s → NOT FOUND\n%!" tc.name;
-      Lwt.return (tool_msg tc.id msg)
+      tool_msg tc.id msg
     | Some packed ->
       Printf.eprintf "[Tool]: %s(%s)\n%!" tc.name tc.args;
-      let* output_str = Tool.dispatch packed tc.args in
+      let output_str = Tool.dispatch packed tc.args in
       Printf.eprintf "[Tool Result]: %s\n%!" output_str;
-      Lwt.return (tool_msg tc.id output_str)
+      tool_msg tc.id output_str
   ) tcs
 
 (** After the LLM responds with [reply], store it in memory, dispatch
@@ -101,58 +102,53 @@ type step_outcome =
   | Continue of t          (** tool calls dispatched; keep looping *)
   | Done     of t * string (** terminal reply — updated session + content *)
 
-let run_turn_step sess (reply : chat_message) =
-  let open Lwt.Syntax in
+let run_turn_step net sess (reply : chat_message) =
   let final_memory = Memory.Buffer.add sess.memory reply in
   let new_sess = { sess with memory = final_memory; turn_idx = sess.turn_idx + 1 } in
   match reply.tool_calls with
   | Some tcs when tcs <> [] ->
-    let* tool_responses = execute_tool_calls new_sess tcs in
+    let tool_responses = execute_tool_calls net new_sess tcs in
     let memory_with_tools =
       List.fold_left Memory.Buffer.add new_sess.memory tool_responses
     in
-    Lwt.return (Continue { new_sess with memory = memory_with_tools })
+    Continue { new_sess with memory = memory_with_tools }
   | _ ->
-    Lwt.return (Done (new_sess, reply.content))
+    Done (new_sess, reply.content)
 
 (* Non-streaming conversation loop *)
 
-let rec run_conversations sess =
-  let open Lwt.Syntax in
-  let* result = Provider.complete_packed ~tools:sess.tools sess.provider (history_for_llm sess) in
-  let* outcome = run_turn_step sess result.value in
+let rec run_conversations net sess =
+  let result = Provider.complete_packed net ~tools:sess.tools sess.provider (history_for_llm sess) in
+  let outcome = run_turn_step net sess result.value in
   match outcome with
-  | Continue sess' -> run_conversations sess'
-  | Done (sess', _content) -> Lwt.return (sess', result)
+  | Continue sess' -> run_conversations net sess'
+  | Done (sess', _content) -> (sess', result)
 
-(** [turn sess user_input] sends a user message and returns the updated
+(** [turn net sess user_input] sends a user message and returns the updated
     session and the assistant response metadata (non-streaming). *)
-let turn sess user_input =
+let turn net sess user_input =
   let user = user_msg user_input in
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
-  run_conversations sess'
+  run_conversations net sess'
 
 (* Streaming conversation loop *)
 
-let rec run_conversations_stream sess ~on_token =
-  let open Lwt.Syntax in
-  let stream, meta_promise =
-    Provider.stream_packed ~tools:sess.tools sess.provider (history_for_llm sess)
+let rec run_conversations_stream net sess ~on_token =
+  let result_with_meta =
+    Provider.stream_packed net ~tools:sess.tools ~on_token sess.provider (history_for_llm sess)
   in
-  let* () = Lwt_stream.iter (fun token -> on_token token) stream in
-  let* result_with_meta = meta_promise in
-  let* outcome = run_turn_step sess result_with_meta.value in
+  let outcome = run_turn_step net sess result_with_meta.value in
   match outcome with
-  | Continue sess' -> run_conversations_stream sess' ~on_token
-  | Done (sess', _content) -> Lwt.return (sess', result_with_meta)
+  | Continue sess' -> run_conversations_stream net sess' ~on_token
+  | Done (sess', _content) -> (sess', result_with_meta)
 
-(** [turn_stream sess user_input ~on_token] is like [turn] but streams
+(** [turn_stream net sess user_input ~on_token] is like [turn] but streams
     tokens via [on_token] as they arrive. Returns the updated session and
     metadata when the stream is exhausted. *)
-let turn_stream sess user_input ~on_token =
+let turn_stream net sess user_input ~on_token =
   let user = user_msg user_input in
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
-  run_conversations_stream sess' ~on_token
+  run_conversations_stream net sess' ~on_token
 
 (* Export / pretty-print *)
 

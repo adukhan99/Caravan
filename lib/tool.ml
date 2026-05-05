@@ -45,15 +45,15 @@ let name_of_packed (Tool (module T)) = T.name
 let description_of_packed (Tool (module T)) = T.description
 let schema_of_packed (Tool (module T)) = T.json_schema ()
 
-let dispatch (Tool (module T)) (args_json : string) : string Lwt.t =
+let dispatch (Tool (module T)) (args_json : string) : string =
   match Yojson.Safe.from_string args_json with
   | exception _ ->
-    Lwt.return (Printf.sprintf
+    Printf.sprintf
       "Error: could not parse tool arguments as JSON. \
-       Received: %s. Please provide valid JSON matching the schema." args_json)
+       Received: %s. Please provide valid JSON matching the schema." args_json
   | json ->
     match T.parse_args json with
-    | Error err -> Lwt.return (Printf.sprintf "Error parsing arguments: %s" err)
+    | Error err -> Printf.sprintf "Error parsing arguments: %s" err
     | Ok input ->
         let output =
           Effect.Deep.try_with
@@ -66,4 +66,5 @@ let dispatch (Tool (module T)) (args_json : string) : string Lwt.t =
                 | _ -> None
             }
         in
-        Lwt.return (T.format_output output)
+        T.format_output output
+

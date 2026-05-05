@@ -2,10 +2,9 @@
  (name OrchCaml)
  (libraries
   unix
-  lwt
-  lwt.unix
-  lwt_ppx
-  cohttp-lwt-unix
+  eio
+  eio_main
+  cohttp-eio
   uri
   yojson
   re

@@ -3,6 +3,11 @@ open OrchCaml
 (** OrchCaml.Tools.Search — Web search tool.
 
     Config precedence: SEARCH_API_KEY env var > [tools] search_api_key in config.toml.
+
+    The tool receives its Eio net capability via the SEARCH_NET_CAPABILITY
+    effect handler installed by the REPL entry point. If no handler is
+    installed (e.g. in tests), it falls back to a blocking Unix HTTP call
+    using Eio_main.run internally on a fresh domain.
 *)
 
 module Search : Tool.TOOL = struct
@@ -67,51 +72,72 @@ module Search : Tool.TOOL = struct
     | Some k when k <> "" -> Some k
     | _ -> Config.get_string "search_api_key"
 
-  let execute { query; num_results } =
+  (** Perform the HTTP search using the Eio net capability. *)
+  let do_search net { query; num_results } =
+    let encoded_query = Uri.pct_encode query in
+    let url = Printf.sprintf
+      "https://api.search.brave.com/res/v1/web/search?q=%s&count=%d"
+      encoded_query num_results
+    in
+    let uri  = Uri.of_string url in
+    let headers = Http.Header.of_list [
+      ("Accept",                "application/json");
+      ("X-Subscription-Token",  match get_api_key () with Some k -> k | None -> "");
+    ] in
+    (* We need HTTPS for Brave Search, so we use eio-ssl. 
+       Note: search tool uses its own eio-ssl wrapper since it doesn't share provider config. *)
+    let https uri (sock : [ `Generic ] Eio.Net.stream_socket_ty Eio.Resource.t) =
+      let host = Uri.host uri |> Option.value ~default:"" in
+      let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
+      let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in
+      let ssl_sock_raw = Eio_ssl.Context.ssl_socket ctx in
+      Ssl.set_client_SNI_hostname ssl_sock_raw host;
+      let ssl_sock = Eio_ssl.connect ctx in
+      (ssl_sock :> _ Eio.Flow.two_way)
+    in
+    let client = Cohttp_eio.Client.make ~https:(Some https) net in
+    Eio.Switch.run @@ fun sw ->
+    let (resp, body) = Cohttp_eio.Client.get client ~sw ~headers uri in
+    let status = Http.Response.status resp |> Http.Status.to_int in
+    let body_str = Eio.Buf_read.(of_flow body ~max_size:max_int |> take_all) in
+    if status <> 200 then
+      Error (Printf.sprintf "HTTP %d: %s" status body_str)
+    else
+      let json = Yojson.Safe.from_string body_str in
+      let open Yojson.Safe.Util in
+      let web = json |> member "web" |> member "results" in
+      let results =
+        match web with
+        | `List items ->
+          List.map (fun item ->
+            let title   = item |> member "title"       |> to_string_option |> Option.value ~default:"" in
+            let url     = item |> member "url"         |> to_string_option |> Option.value ~default:"" in
+            let snippet = item |> member "description" |> to_string_option |> Option.value ~default:"" in
+            { title; url; snippet }
+          ) items
+        | _ -> []
+      in
+      Ok results
+
+  (** Effect used to pass the net capability into the tool's execute call. *)
+  type _ Effect.t += Get_net : _ Eio.Net.t Effect.t
+
+  let execute input =
     match get_api_key () with
     | None ->
       Error
         "No Search API key found. Set SEARCH_API_KEY or add \
          search_api_key under [tools] in ~/.orchcaml/config.toml."
-    | Some api_key ->
-      let encoded_query = Uri.pct_encode query in
-      let uri = Uri.of_string
-        (Printf.sprintf
-           "https://api.search.brave.com/res/v1/web/search?q=%s&count=%d"
-           encoded_query num_results)
-      in
-      let headers = Cohttp.Header.of_list [
-        "Accept",            "application/json";
-        "Accept-Encoding",   "gzip";
-        "X-Subscription-Token", api_key;
-      ] in
-      Lwt_main.run (
-        Lwt.catch
-          (fun () ->
-            let open Lwt.Syntax in
-            let* (resp, body) = Cohttp_lwt_unix.Client.get ~headers uri in
-            let status = Cohttp.Response.status resp in
-            let code   = Cohttp.Code.code_of_status status in
-            let* body_str = Cohttp_lwt.Body.to_string body in
-            if code <> 200 then
-              Lwt.return (Error (Printf.sprintf "HTTP %d: %s" code body_str))
-            else
-              let json = Yojson.Safe.from_string body_str in
-              let open Yojson.Safe.Util in
-              let web = json |> member "web" |> member "results" in
-              let results =
-                match web with
-                | `List items ->
-                  List.map (fun item ->
-                    let title   = item |> member "title"       |> to_string_option |> Option.value ~default:"" in
-                    let url     = item |> member "url"         |> to_string_option |> Option.value ~default:"" in
-                    let snippet = item |> member "description" |> to_string_option |> Option.value ~default:"" in
-                    { title; url; snippet }
-                  ) items
-                | _ -> []
-              in
-              Lwt.return (Ok results))
-          (fun exn ->
-            Lwt.return (Error (Printf.sprintf "Request failed: %s" (Printexc.to_string exn)))))
+    | Some _api_key ->
+      (* Try to get net capability via effect; fall back to a fresh Eio domain. *)
+      (match Effect.perform Get_net with
+       | net -> do_search net input
+       | exception Effect.Unhandled _ ->
+         (* Fallback: spin up a new Eio event loop on a fresh domain. *)
+         Domain.join (Domain.spawn (fun () ->
+           Eio_main.run (fun env ->
+             do_search env#net input
+           )
+         )))
 
 end

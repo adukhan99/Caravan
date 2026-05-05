@@ -46,7 +46,7 @@ let test_tool_read_file () =
   
   let json_args = Printf.sprintf {|{"path": "%s"}|} path in
   let tool = Tool.Tool (module OrchCamlTools.Read_file.Read_file) in
-  let res = Lwt_main.run (Tool.dispatch tool json_args) in
+  let res = Tool.dispatch tool json_args in
   
   Sys.remove path;
   if res <> "Hello Tool" then
@@ -57,7 +57,7 @@ let test_tool_touch () =
   if Sys.file_exists path then Sys.remove path;
   let json_args = Printf.sprintf {|{"path": "%s"}|} path in
   let tool = Tool.Tool (module OrchCamlTools.Touch.Touch) in
-  let res = Lwt_main.run (Tool.dispatch tool json_args) in
+  let res = Tool.dispatch tool json_args in
   
   let exists = Sys.file_exists path in
   if Sys.file_exists path then Sys.remove path;
@@ -71,7 +71,7 @@ let test_tool_mkdir () =
   
   let json_args = Printf.sprintf {|{"path": "%s"}|} dir_path in
   let tool = Tool.Tool (module OrchCamlTools.Mkdir.Mkdir) in
-  let res = Lwt_main.run (Tool.dispatch tool json_args) in
+  let res = Tool.dispatch tool json_args in
   
   let exists = Sys.file_exists dir_path && Sys.is_directory dir_path in
   if exists then Unix.rmdir dir_path;
@@ -82,7 +82,7 @@ let test_tool_mkdir () =
 let test_tool_ls () =
   let json_args = {|{"path": "."}|} in
   let tool = Tool.Tool (module OrchCamlTools.Ls.Ls) in
-  let res = Lwt_main.run (Tool.dispatch tool json_args) in
+  let res = Tool.dispatch tool json_args in
   
   (* We just check if it returns some files *)
   if String.length res = 0 then
@@ -127,16 +127,21 @@ let test_monitor_format_usage () =
 
 let run_tests () =
   Printf.printf "Running tests...\n";
-  test_memory_buffer ();
-  test_parser_json ();
-  test_parser_bool ();
-  test_config ();
-  test_tool_read_file ();
-  test_tool_touch ();
-  test_tool_mkdir ();
-  test_tool_ls ();
-  test_usage_openai_parsing ();
-  test_monitor_format_usage ();
-  Printf.printf "All tests passed.\n"
+  Eio_main.run (fun env ->
+    (* If any tools need the net capability, we can handle the effect here,
+       or just pass the env where needed. The Search tool falls back to Eio_main internally
+       if no effect handler is present. *)
+    test_memory_buffer ();
+    test_parser_json ();
+    test_parser_bool ();
+    test_config ();
+    test_tool_read_file ();
+    test_tool_touch ();
+    test_tool_mkdir ();
+    test_tool_ls ();
+    test_usage_openai_parsing ();
+    test_monitor_format_usage ();
+    Printf.printf "All tests passed.\n"
+  )
 
 let () = run_tests ()

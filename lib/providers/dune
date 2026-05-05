@@ -2,9 +2,11 @@
  (name OrchCamlProviders)
  (libraries
   OrchCaml
-  lwt
-  lwt.unix
-  cohttp-lwt-unix
+  eio
+  eio_main
+  cohttp-eio
+  eio-ssl
+  ssl
   uri
   yojson
   re)

@@ -155,10 +155,9 @@ module Summary = struct
   let length mem = Buffer.length mem.buf
 
   (** [compress ~complete mem] uses [complete] to summarise old history.
-      [complete] should be a function [chat_message list -> string Lwt.t].
+      [complete] should be a function [chat_message list -> string].
       Call this when [length mem >= mem.max_messages]. *)
   let compress ~complete mem =
-    let open Lwt.Syntax in
     let msgs = Buffer.get mem.buf in
     let prompt = [
       system_msg "You are a summarisation assistant. Summarise the following \
@@ -167,8 +166,8 @@ module Summary = struct
       user_msg (String.concat "\n\n" (List.map (fun m ->
         Printf.sprintf "[%s]: %s" (role_to_string m.role) m.content) msgs));
     ] in
-    let* summary = complete prompt in
-    Lwt.return { mem with summary = Some summary; buf = Buffer.clear mem.buf }
+    let summary = complete prompt in
+    { mem with summary = Some summary; buf = Buffer.clear mem.buf }
 
   let to_json mem =
     `Assoc [

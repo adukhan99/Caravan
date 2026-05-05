@@ -5,9 +5,8 @@
   OrchCaml
   OrchCamlProviders
   OrchCamlTools
-  lwt
-  lwt.unix
-  lwt_ppx
+  eio
+  eio_main
   cmdliner
   re
   fmt

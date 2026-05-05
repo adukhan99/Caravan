@@ -2,6 +2,7 @@
 
     Works with any OpenAI-compatible API (OpenAI, Groq, Together,
     Mistral, local OpenAI-proxy, etc.) by setting [base_url].
+    Uses cohttp-eio for direct-style, fiber-friendly HTTP.
 
     API keys are read from the environment or config file.
     Look for [(* API_KEY_SOURCE *)] comments to change the source.
@@ -88,6 +89,9 @@ let auth_headers cfg =
   | None    -> h
   | Some id -> ("OpenAI-Organization", id) :: h
 
+let read_body (body : Cohttp_eio.Body.t) =
+  Eio.Buf_read.(of_flow body ~max_size:max_int |> take_all)
+
 let parse_usage json =
   let open Yojson.Safe.Util in
   match json |> member "usage" with
@@ -127,178 +131,171 @@ let parse_complete_response body_str model =
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish ?usage reply_msg
 
+(** Wrapper to enable HTTPS connections for cohttp-eio using eio-ssl. *)
+let https uri (sock : [ `Generic ] Eio.Net.stream_socket_ty Eio.Resource.t) =
+  let host = Uri.host uri |> Option.value ~default:"" in
+  let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
+  let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in
+  let ssl_sock_raw = Eio_ssl.Context.ssl_socket ctx in
+  Ssl.set_client_SNI_hostname ssl_sock_raw host;
+  let ssl_sock = Eio_ssl.connect ctx in
+  (ssl_sock :> _ Eio.Flow.two_way)
+
 module Openai = struct
   type nonrec config = config
 
   let name = "openai"
 
-  let complete cfg ?tools msgs =
-    let open Lwt.Syntax in
-    let uri  = Uri.of_string (cfg.base_url ^ "/chat/completions") in
-    let hdrs = Cohttp.Header.of_list (auth_headers cfg) in
-    let body = Cohttp_lwt.Body.of_string
-      (Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:false)) in
-    let* (resp, body_lwt) = Cohttp_lwt_unix.Client.post ~headers:hdrs ~body uri in
-    let status = Cohttp.Response.status resp in
-    let* body_str = Cohttp_lwt.Body.to_string body_lwt in
-    if Cohttp.Code.is_success (Cohttp.Code.code_of_status status) then
-      Lwt.return (parse_complete_response body_str cfg.model)
-    else
-      Lwt.fail_with (Printf.sprintf "OpenAI error %s: %s"
-        (Cohttp.Code.string_of_status status) body_str)
-
-  let stream cfg ?tools msgs =
+  let complete net cfg ?tools msgs =
     let uri      = Uri.of_string (cfg.base_url ^ "/chat/completions") in
-    let hdrs     = Cohttp.Header.of_list
-      (("Accept", "text/event-stream") :: auth_headers cfg) in
+    let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:false) in
+    let headers  = Http.Header.of_list (auth_headers cfg) in
+    let client   = Cohttp_eio.Client.make ~https:(Some https) net in
+    Eio.Switch.run @@ fun sw ->
+    let (resp, body) =
+      Cohttp_eio.Client.post client ~sw ~headers
+        ~body:(Cohttp_eio.Body.of_string body_str) uri
+    in
+    let status = Http.Response.status resp |> Http.Status.to_int in
+    let resp_body = read_body body in
+    if status >= 200 && status < 300 then
+      parse_complete_response resp_body cfg.model
+    else
+      failwith (Printf.sprintf "OpenAI error %d: %s" status resp_body)
+
+  let stream net cfg ?tools msgs ~on_token =
+    let uri      = Uri.of_string (cfg.base_url ^ "/chat/completions") in
+    let headers  = Http.Header.of_list (("Accept", "text/event-stream") :: auth_headers cfg) in
     let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:true) in
-    let token_stream, token_push = Lwt_stream.create () in
-    let safe_push v = try token_push v with Lwt_stream.Closed -> () in
-    let meta_promise, meta_resolver = Lwt.wait () in
-    let buf = Buffer.create 4096 in
+    let buf      = Buffer.create 4096 in
     (* Accumulate tool_call deltas: index -> (id, name, args_buf) *)
     let tool_acc : (int, string * string * Buffer.t) Hashtbl.t = Hashtbl.create 4 in
     let usage_ref = ref None in
-    let run () =
-      let open Lwt.Syntax in
-      let* (resp, body_lwt) =
-        Cohttp_lwt_unix.Client.post
-          ~headers:hdrs ~body:(Cohttp_lwt.Body.of_string body_str) uri
-      in
-      let status = Cohttp.Response.status resp in
-      if not (Cohttp.Code.is_success (Cohttp.Code.code_of_status status)) then begin
-        let* err = Cohttp_lwt.Body.to_string body_lwt in
-        token_push None;
-        Lwt.wakeup_exn meta_resolver
-          (Failure (Printf.sprintf "OpenAI stream error %s: %s"
-            (Cohttp.Code.string_of_status status) err));
-        Lwt.return_unit
-      end else begin
-        let body_stream = Cohttp_lwt.Body.to_stream body_lwt in
-        let* () = Lwt_stream.iter (fun chunk ->
-          let lines = String.split_on_char '\n' chunk in
-          List.iter (fun line ->
-            let line = String.trim line in
-            if String.length line > 6 && String.sub line 0 6 = "data: " then begin
-              let data = String.sub line 6 (String.length line - 6) in
-              if data = "[DONE]" then begin
-                safe_push None;
-                let full = Buffer.contents buf in
-                let tool_calls =
-                  if Hashtbl.length tool_acc = 0 then None
-                  else begin
-                    let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
-                    let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-                    Some (List.map (fun (_, (id, name, abuf)) ->
-                      OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
-                    ) sorted)
-                  end
-                in
-                let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
-                Lwt.wakeup meta_resolver
-                  (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" ?usage:(!usage_ref) reply)
-              end else begin
-                (try
-                  let json = Yojson.Safe.from_string data in
-                  let open Yojson.Safe.Util in
-                  (* Check for usage chunk *)
-                  (match json |> member "usage" with
-                   | `Assoc _ -> usage_ref := parse_usage json
-                   | _ -> ());
-
-                  let choices = json |> member "choices" in
-                  if choices <> `Null && choices <> `List [] then begin
-                    let delta = choices |> index 0 |> member "delta" in
-                    (* Accumulate content *)
-                    (match delta |> member "content" with
-                     | `String token ->
-                       Buffer.add_string buf token;
-                       safe_push (Some token)
-                     | _ -> ());
-                    (* Accumulate tool_calls deltas *)
-                    (match delta |> member "tool_calls" with
-                     | `List tcs ->
-                       List.iter (fun tc ->
-                         let idx = tc |> member "index" |> to_int in
-                         let (id, name, abuf) =
-                           match Hashtbl.find_opt tool_acc idx with
-                           | Some existing -> existing
-                           | None ->
-                             let entry = ("", "", Buffer.create 64) in
-                             Hashtbl.add tool_acc idx entry;
-                             entry
-                         in
-                         let new_id =
-                           match tc |> member "id" with
-                           | `String s when s <> "" -> s
-                           | _ -> id
-                         in
-                         let fn = tc |> member "function" in
-                         let new_name =
-                           match fn |> member "name" with
-                           | `String s when s <> "" -> s
-                           | _ -> name
-                         in
-                         (match fn |> member "arguments" with
-                          | `String s -> Buffer.add_string abuf s
-                          | _ -> ());
-                         Hashtbl.replace tool_acc idx (new_id, new_name, abuf)
-                       ) tcs
-                     | _ -> ())
-                  end
-                with exn ->
-                  Printf.eprintf "[OpenAI Stream Parse Error]: %s\nData: %s\n%!"
-                    (Printexc.to_string exn) data)
-              end
-            end
-          ) lines
-        ) body_stream in
-        safe_push None;
-        (if Lwt.is_sleeping meta_promise then begin
-          let full = Buffer.contents buf in
-          let tool_calls =
-            if Hashtbl.length tool_acc = 0 then None
-            else begin
-              let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
-              let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-              Some (List.map (fun (_, (id, name, abuf)) ->
-                OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
-              ) sorted)
-            end
-          in
-          let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
-          Lwt.wakeup meta_resolver
-            (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" ?usage:(!usage_ref) reply)
-        end);
-        Lwt.return_unit
-      end
+    let result_ref = ref None in
+    let client   = Cohttp_eio.Client.make ~https:(Some https) net in
+    Eio.Switch.run @@ fun sw ->
+    let (resp, body) =
+      Cohttp_eio.Client.post client ~sw ~headers
+        ~body:(Cohttp_eio.Body.of_string body_str) uri
     in
-    Lwt.async run;
-    (token_stream, meta_promise)
-
-  let list_models cfg =
-    let open Lwt.Syntax in
-    let uri  = Uri.of_string (cfg.base_url ^ "/models") in
-    let hdrs = Cohttp.Header.of_list (auth_headers cfg) in
-    Lwt.catch
-      (fun () ->
-        let* (resp, body_lwt) = Cohttp_lwt_unix.Client.get ~headers:hdrs uri in
-        let status = Cohttp.Response.status resp in
-        let* body_str = Cohttp_lwt.Body.to_string body_lwt in
-        if Cohttp.Code.is_success (Cohttp.Code.code_of_status status) then
-          try
-            let json = Yojson.Safe.from_string body_str in
-            let open Yojson.Safe.Util in
-            let models =
-              json |> member "data" |> to_list
-              |> List.map (fun m -> m |> member "id" |> to_string)
+    let status = Http.Response.status resp |> Http.Status.to_int in
+    if status < 200 || status >= 300 then begin
+      let err = read_body body in
+      failwith (Printf.sprintf "OpenAI stream error %d: %s" status err)
+    end;
+    let buf_r = Eio.Buf_read.of_flow body ~max_size:max_int in
+    (try
+      while true do
+        let line = String.trim (Eio.Buf_read.line buf_r) in
+        if String.length line > 6 && String.sub line 0 6 = "data: " then begin
+          let data = String.sub line 6 (String.length line - 6) in
+          if data = "[DONE]" then begin
+            let full = Buffer.contents buf in
+            let tool_calls =
+              if Hashtbl.length tool_acc = 0 then None
+              else begin
+                let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
+                let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
+                Some (List.map (fun (_, (id, name, abuf)) ->
+                  OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
+                ) sorted)
+              end
             in
-            Lwt.return models
-          with _ ->
-            Lwt.fail_with "cannot query remote provider"
-        else
-          Lwt.fail_with "cannot query remote provider")
-      (fun _ -> Lwt.fail_with "cannot query remote provider")
+            let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+            result_ref := Some (wrap_result ~raw_response:full ~model:cfg.model
+              ~provider:"openai" ?usage:(!usage_ref) reply)
+          end else begin
+            (try
+              let json = Yojson.Safe.from_string data in
+              let open Yojson.Safe.Util in
+              (* Check for usage chunk *)
+              (match json |> member "usage" with
+               | `Assoc _ -> usage_ref := parse_usage json
+               | _ -> ());
+              let choices = json |> member "choices" in
+              if choices <> `Null && choices <> `List [] then begin
+                let delta = choices |> index 0 |> member "delta" in
+                (* Accumulate content *)
+                (match delta |> member "content" with
+                 | `String token ->
+                   Buffer.add_string buf token;
+                   on_token token
+                 | _ -> ());
+                (* Accumulate tool_calls deltas *)
+                (match delta |> member "tool_calls" with
+                 | `List tcs ->
+                   List.iter (fun tc ->
+                     let idx = tc |> member "index" |> to_int in
+                     let (id, name, abuf) =
+                       match Hashtbl.find_opt tool_acc idx with
+                       | Some existing -> existing
+                       | None ->
+                         let entry = ("", "", Buffer.create 64) in
+                         Hashtbl.add tool_acc idx entry;
+                         entry
+                     in
+                     let new_id =
+                       match tc |> member "id" with
+                       | `String s when s <> "" -> s
+                       | _ -> id
+                     in
+                     let fn = tc |> member "function" in
+                     let new_name =
+                       match fn |> member "name" with
+                       | `String s when s <> "" -> s
+                       | _ -> name
+                     in
+                     (match fn |> member "arguments" with
+                      | `String s -> Buffer.add_string abuf s
+                      | _ -> ());
+                     Hashtbl.replace tool_acc idx (new_id, new_name, abuf)
+                   ) tcs
+                 | _ -> ())
+              end
+            with exn ->
+              Printf.eprintf "[OpenAI Stream Parse Error]: %s\nData: %s\n%!"
+                (Printexc.to_string exn) data)
+          end
+        end
+      done
+    with End_of_file -> ());
+    match !result_ref with
+    | Some r -> r
+    | None ->
+      let full = Buffer.contents buf in
+      let tool_calls =
+        if Hashtbl.length tool_acc = 0 then None
+        else begin
+          let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
+          let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
+          Some (List.map (fun (_, (id, name, abuf)) ->
+            OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
+          ) sorted)
+        end
+      in
+      let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+      wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai"
+        ?usage:(!usage_ref) reply
+
+  let list_models net cfg =
+    let uri    = Uri.of_string (cfg.base_url ^ "/models") in
+    let client = Cohttp_eio.Client.make ~https:(Some https) net in
+    (try
+      Eio.Switch.run @@ fun sw ->
+      let headers = Http.Header.of_list (auth_headers cfg) in
+      let (resp, body) = Cohttp_eio.Client.get client ~sw ~headers uri in
+      let status = Http.Response.status resp |> Http.Status.to_int in
+      let body_str = read_body body in
+      if status >= 200 && status < 300 then
+        try
+          let json = Yojson.Safe.from_string body_str in
+          let open Yojson.Safe.Util in
+          json |> member "data" |> to_list
+          |> List.map (fun m -> m |> member "id" |> to_string)
+        with _ -> failwith "cannot query remote provider"
+      else
+        failwith "cannot query remote provider"
+    with _ -> failwith "cannot query remote provider")
 
 end
 

@@ -2,6 +2,7 @@
 
     Talks to the Ollama REST API at [http://localhost:11434] (configurable).
     Supports both non-streaming [complete] and streaming [stream] calls.
+    Uses cohttp-eio for direct-style, fiber-friendly HTTP.
 
     API reference: https://github.com/ollama/ollama/blob/main/docs/api.md
 *)
@@ -67,19 +68,8 @@ let make_body cfg ?tools msgs ~stream =
       in
       `Assoc (("tools", tools_json) :: base)
 
-let post_json url body =
-  let open Lwt.Syntax in
-  let uri = Uri.of_string url in
-  let body_str = Yojson.Safe.to_string body in
-  let headers = Cohttp.Header.of_list [
-    ("Content-Type", "application/json");
-    ("Accept",       "application/json");
-  ] in
-  let* (resp, body_lwt) =
-    Cohttp_lwt_unix.Client.post ~headers ~body:(Cohttp_lwt.Body.of_string body_str) uri in
-  let status = Cohttp.Response.status resp in
-  let* body_str = Cohttp_lwt.Body.to_string body_lwt in
-  Lwt.return (status, body_str)
+let read_body (body : Cohttp_eio.Body.t) =
+  Eio.Buf_read.(of_flow body ~max_size:max_int |> take_all)
 
 let parse_usage json =
   let open Yojson.Safe.Util in
@@ -123,116 +113,107 @@ module Ollama = struct
 
   let name = "ollama"
 
-  let complete cfg ?tools msgs =
-    let open Lwt.Syntax in
-    let url  = base_url cfg ^ "/api/chat" in
-    let body = make_body cfg ?tools msgs ~stream:false in
-    let* (status, resp_body) = post_json url body in
-    if Cohttp.Code.is_success (Cohttp.Code.code_of_status status) then
-      Lwt.return (parse_complete_response resp_body cfg.model)
-    else
-      Lwt.fail_with (Printf.sprintf "Ollama error %s: %s"
-        (Cohttp.Code.string_of_status status) resp_body)
-
-  let stream cfg ?tools msgs =
-    let url      = base_url cfg ^ "/api/chat" in
-    let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:true) in
-    let uri      = Uri.of_string url in
-    let headers  = Cohttp.Header.of_list [("Content-Type", "application/json")] in
-    let token_stream, token_push = Lwt_stream.create () in
-    let safe_push v = try token_push v with Lwt_stream.Closed -> () in
-    let meta_promise, meta_resolver = Lwt.wait () in
-    let buf = Buffer.create 4096 in
-    let run () =
-      let open Lwt.Syntax in
-      let* (resp, body_lwt) =
-        Cohttp_lwt_unix.Client.post
-          ~headers ~body:(Cohttp_lwt.Body.of_string body_str) uri
-      in
-      let status = Cohttp.Response.status resp in
-      if not (Cohttp.Code.is_success (Cohttp.Code.code_of_status status)) then begin
-        let* err = Cohttp_lwt.Body.to_string body_lwt in
-        token_push None;
-        Lwt.wakeup_exn meta_resolver
-          (Failure (Printf.sprintf "Ollama stream error %s: %s"
-            (Cohttp.Code.string_of_status status) err));
-        Lwt.return_unit
-      end else begin
-        let body_stream = Cohttp_lwt.Body.to_stream body_lwt in
-        let* () = Lwt_stream.iter (fun chunk ->
-          let lines = String.split_on_char '\n' chunk in
-          List.iter (fun line ->
-            let line = String.trim line in
-            if line <> "" then begin
-              (try
-                let json = Yojson.Safe.from_string line in
-                let open Yojson.Safe.Util in
-                let msg_json = json |> member "message" in
-                let token = msg_json |> member "content" |> to_string in
-                Buffer.add_string buf token;
-                safe_push (Some token);
-                let done_ = json |> member "done" |> to_bool in
-                if done_ then begin
-                  safe_push None;
-                  let full   = Buffer.contents buf in
-                  let finish = json |> member "done_reason" |> to_string_option in
-                  let usage  = parse_usage json in
-                  let tool_calls =
-                    match msg_json |> member "tool_calls" with
-                    | `Null -> None
-                    | `List l ->
-                      Some (List.map (fun tc ->
-                        let func = tc |> member "function" in
-                        let name = func |> member "name" |> to_string in
-                        let args = func |> member "arguments" |> Yojson.Safe.to_string in
-                        OrchCaml.Types.{ id = "call_" ^ name; name; args }
-                      ) l)
-                    | _ -> None
-                  in
-                  let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
-                  Lwt.wakeup meta_resolver
-                    (wrap_result ~raw_response:full ~model:cfg.model
-                       ~provider:"ollama" ?finish_reason:finish ?usage reply)
-                end
-              with exn -> 
-                Printf.eprintf "[Ollama Stream Parse Error]: %s\nLine: %s\n%!" (Printexc.to_string exn) line)
-            end
-          ) lines
-        ) body_stream in
-        safe_push None;
-        (if Lwt.is_sleeping meta_promise then
-          Lwt.wakeup meta_resolver
-             (wrap_result ~raw_response:(Buffer.contents buf)
-                ~model:cfg.model ~provider:"ollama"
-                (OrchCaml.Types.assistant_msg (Buffer.contents buf))));
-        Lwt.return_unit
-      end
+  let complete net cfg ?tools msgs =
+    let url  = Uri.of_string (base_url cfg ^ "/api/chat") in
+    let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:false) in
+    let headers  = Http.Header.of_list [
+      ("Content-Type", "application/json");
+      ("Accept",       "application/json");
+    ] in
+    let client = Cohttp_eio.Client.make ~https:None net in
+    Eio.Switch.run @@ fun sw ->
+    let (resp, body) =
+      Cohttp_eio.Client.post client ~sw ~headers
+        ~body:(Cohttp_eio.Body.of_string body_str) url
     in
-    Lwt.async run;
-    (token_stream, meta_promise)
+    let status = Http.Response.status resp |> Http.Status.to_int in
+    let resp_body = read_body body in
+    if status >= 200 && status < 300 then
+      parse_complete_response resp_body cfg.model
+    else
+      failwith (Printf.sprintf "Ollama error %d: %s" status resp_body)
 
-  let list_models cfg =
-    let open Lwt.Syntax in
-    let url = base_url cfg ^ "/api/tags" in
-    let uri = Uri.of_string url in
-    Lwt.catch
-      (fun () ->
-        let* (resp, body) = Cohttp_lwt_unix.Client.get uri in
-        let status = Cohttp.Response.status resp in
-        let* body_str = Cohttp_lwt.Body.to_string body in
-        if Cohttp.Code.is_success (Cohttp.Code.code_of_status status) then
-          try
-            let json = Yojson.Safe.from_string body_str in
+  let stream net cfg ?tools msgs ~on_token =
+    let url      = Uri.of_string (base_url cfg ^ "/api/chat") in
+    let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:true) in
+    let headers  = Http.Header.of_list [("Content-Type", "application/json")] in
+    let buf      = Buffer.create 4096 in
+    let result   = ref None in
+    let client   = Cohttp_eio.Client.make ~https:None net in
+    Eio.Switch.run @@ fun sw ->
+    let (resp, body) =
+      Cohttp_eio.Client.post client ~sw ~headers
+        ~body:(Cohttp_eio.Body.of_string body_str) url
+    in
+    let status = Http.Response.status resp |> Http.Status.to_int in
+    if status < 200 || status >= 300 then begin
+      let err_body = read_body body in
+      failwith (Printf.sprintf "Ollama stream error %d: %s" status err_body)
+    end;
+    let buf_r = Eio.Buf_read.of_flow body ~max_size:max_int in
+    (try
+      while true do
+        let line = String.trim (Eio.Buf_read.line buf_r) in
+        if line <> "" then begin
+          (try
+            let json = Yojson.Safe.from_string line in
             let open Yojson.Safe.Util in
-            let models =
-              json |> member "models" |> to_list
-              |> List.map (fun m -> m |> member "name" |> to_string)
-            in
-            Lwt.return models
-          with _ -> Lwt.fail_with "cannot query remote provider"
-        else
-          Lwt.fail_with "cannot query remote provider")
-      (fun _ -> Lwt.fail_with "cannot query remote provider")
+            let msg_json = json |> member "message" in
+            let token = msg_json |> member "content" |> to_string in
+            Buffer.add_string buf token;
+            on_token token;
+            let done_ = json |> member "done" |> to_bool in
+            if done_ then begin
+              let full   = Buffer.contents buf in
+              let finish = json |> member "done_reason" |> to_string_option in
+              let usage  = parse_usage json in
+              let tool_calls =
+                match msg_json |> member "tool_calls" with
+                | `Null -> None
+                | `List l ->
+                  Some (List.map (fun tc ->
+                    let func = tc |> member "function" in
+                    let name = func |> member "name" |> to_string in
+                    let args = func |> member "arguments" |> Yojson.Safe.to_string in
+                    OrchCaml.Types.{ id = "call_" ^ name; name; args }
+                  ) l)
+                | _ -> None
+              in
+              let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+              result := Some (wrap_result ~raw_response:full ~model:cfg.model
+                ~provider:"ollama" ?finish_reason:finish ?usage reply)
+            end
+          with exn ->
+            Printf.eprintf "[Ollama Stream Parse Error]: %s\nLine: %s\n%!"
+              (Printexc.to_string exn) line)
+        end
+      done
+    with End_of_file -> ());
+    match !result with
+    | Some r -> r
+    | None ->
+      let full = Buffer.contents buf in
+      wrap_result ~raw_response:full ~model:cfg.model ~provider:"ollama"
+        (OrchCaml.Types.assistant_msg full)
+
+  let list_models net cfg =
+    let url    = Uri.of_string (base_url cfg ^ "/api/tags") in
+    let client = Cohttp_eio.Client.make ~https:None net in
+    (try
+      Eio.Switch.run @@ fun sw ->
+      let (resp, body) = Cohttp_eio.Client.get client ~sw url in
+      let status = Http.Response.status resp |> Http.Status.to_int in
+      let body_str = read_body body in
+      if status >= 200 && status < 300 then
+        try
+          let json = Yojson.Safe.from_string body_str in
+          let open Yojson.Safe.Util in
+          json |> member "models" |> to_list
+          |> List.map (fun m -> m |> member "name" |> to_string)
+        with _ -> failwith "cannot query remote provider"
+      else
+        failwith "cannot query remote provider"
+    with _ -> failwith "cannot query remote provider")
 
 end
 

@@ -60,6 +60,10 @@ let make_body cfg ?tools msgs ~stream =
     ];
     options_to_json_fields cfg.options;
   ] in
+  let base_fields =
+    if stream then ("stream_options", `Assoc [("include_usage", `Bool true)]) :: base_fields
+    else base_fields
+  in
   match tools with
   | None | Some [] -> `Assoc base_fields
   | Some ts ->
@@ -83,6 +87,16 @@ let auth_headers cfg =
   match cfg.org_id with
   | None    -> h
   | Some id -> ("OpenAI-Organization", id) :: h
+
+let parse_usage json =
+  let open Yojson.Safe.Util in
+  match json |> member "usage" with
+  | `Assoc _ as u ->
+    let prompt_tokens     = u |> member "prompt_tokens"     |> to_int in
+    let completion_tokens = u |> member "completion_tokens" |> to_int in
+    let total_tokens      = u |> member "total_tokens"      |> to_int in
+    Some OrchCaml.Types.{ prompt_tokens; completion_tokens; total_tokens; total_duration = None }
+  | _ -> None
 
 let parse_complete_response body_str model =
   let json = Yojson.Safe.from_string body_str in
@@ -109,8 +123,9 @@ let parse_complete_response body_str model =
       ) l)
     | _ -> None
   in
+  let usage = parse_usage json in
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
-  wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish reply_msg
+  wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish ?usage reply_msg
 
 module Openai = struct
   type nonrec config = config
@@ -143,6 +158,7 @@ module Openai = struct
     let buf = Buffer.create 4096 in
     (* Accumulate tool_call deltas: index -> (id, name, args_buf) *)
     let tool_acc : (int, string * string * Buffer.t) Hashtbl.t = Hashtbl.create 4 in
+    let usage_ref = ref None in
     let run () =
       let open Lwt.Syntax in
       let* (resp, body_lwt) =
@@ -180,48 +196,56 @@ module Openai = struct
                 in
                 let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
                 Lwt.wakeup meta_resolver
-                  (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" reply)
+                  (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" ?usage:(!usage_ref) reply)
               end else begin
                 (try
                   let json = Yojson.Safe.from_string data in
                   let open Yojson.Safe.Util in
-                  let delta = json |> member "choices" |> index 0 |> member "delta" in
-                  (* Accumulate content *)
-                  (match delta |> member "content" with
-                   | `String token ->
-                     Buffer.add_string buf token;
-                     safe_push (Some token)
+                  (* Check for usage chunk *)
+                  (match json |> member "usage" with
+                   | `Assoc _ -> usage_ref := parse_usage json
                    | _ -> ());
-                  (* Accumulate tool_calls deltas *)
-                  (match delta |> member "tool_calls" with
-                   | `List tcs ->
-                     List.iter (fun tc ->
-                       let idx = tc |> member "index" |> to_int in
-                       let (id, name, abuf) =
-                         match Hashtbl.find_opt tool_acc idx with
-                         | Some existing -> existing
-                         | None ->
-                           let entry = ("", "", Buffer.create 64) in
-                           Hashtbl.add tool_acc idx entry;
-                           entry
-                       in
-                       let new_id =
-                         match tc |> member "id" with
-                         | `String s when s <> "" -> s
-                         | _ -> id
-                       in
-                       let fn = tc |> member "function" in
-                       let new_name =
-                         match fn |> member "name" with
-                         | `String s when s <> "" -> s
-                         | _ -> name
-                       in
-                       (match fn |> member "arguments" with
-                        | `String s -> Buffer.add_string abuf s
-                        | _ -> ());
-                       Hashtbl.replace tool_acc idx (new_id, new_name, abuf)
-                     ) tcs
-                   | _ -> ())
+
+                  let choices = json |> member "choices" in
+                  if choices <> `Null && choices <> `List [] then begin
+                    let delta = choices |> index 0 |> member "delta" in
+                    (* Accumulate content *)
+                    (match delta |> member "content" with
+                     | `String token ->
+                       Buffer.add_string buf token;
+                       safe_push (Some token)
+                     | _ -> ());
+                    (* Accumulate tool_calls deltas *)
+                    (match delta |> member "tool_calls" with
+                     | `List tcs ->
+                       List.iter (fun tc ->
+                         let idx = tc |> member "index" |> to_int in
+                         let (id, name, abuf) =
+                           match Hashtbl.find_opt tool_acc idx with
+                           | Some existing -> existing
+                           | None ->
+                             let entry = ("", "", Buffer.create 64) in
+                             Hashtbl.add tool_acc idx entry;
+                             entry
+                         in
+                         let new_id =
+                           match tc |> member "id" with
+                           | `String s when s <> "" -> s
+                           | _ -> id
+                         in
+                         let fn = tc |> member "function" in
+                         let new_name =
+                           match fn |> member "name" with
+                           | `String s when s <> "" -> s
+                           | _ -> name
+                         in
+                         (match fn |> member "arguments" with
+                          | `String s -> Buffer.add_string abuf s
+                          | _ -> ());
+                         Hashtbl.replace tool_acc idx (new_id, new_name, abuf)
+                       ) tcs
+                     | _ -> ())
+                  end
                 with exn ->
                   Printf.eprintf "[OpenAI Stream Parse Error]: %s\nData: %s\n%!"
                     (Printexc.to_string exn) data)
@@ -244,7 +268,7 @@ module Openai = struct
           in
           let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
           Lwt.wakeup meta_resolver
-            (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" reply)
+            (wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai" ?usage:(!usage_ref) reply)
         end);
         Lwt.return_unit
       end

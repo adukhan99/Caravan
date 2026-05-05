@@ -88,6 +88,43 @@ let test_tool_ls () =
   if String.length res = 0 then
     failwith ("Tool ls failed, output was empty")
 
+let test_usage_openai_parsing () =
+  (* Simulate the JSON an OpenAI-compatible endpoint would return. *)
+  let fake_body = {|
+    { "choices": [{"message": {"role": "assistant", "content": "Hi"},
+                   "finish_reason": "stop"}],
+      "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21}
+    } |} in
+  let json = Yojson.Safe.from_string fake_body in
+  let open Yojson.Safe.Util in
+  let u_json = json |> member "usage" in
+  let usage = Types.{
+    prompt_tokens     = u_json |> member "prompt_tokens"     |> to_int;
+    completion_tokens = u_json |> member "completion_tokens" |> to_int;
+    total_tokens      = u_json |> member "total_tokens"      |> to_int;
+    total_duration    = None;
+  } in
+  let meta = Types.(wrap_result ~raw_response:"" ~model:"gpt-4o" ~provider:"openai" ~usage
+    (assistant_msg "Hi")) in
+  (match meta.Types.usage with
+   | Some u ->
+     assert (u.Types.prompt_tokens = 9);
+     assert (u.Types.completion_tokens = 12);
+     assert (u.Types.total_tokens = 21);
+     assert (u.Types.total_duration = None)
+   | None -> failwith "usage field was None")
+
+let test_monitor_format_usage () =
+  let usage = Types.{
+    prompt_tokens = 5; completion_tokens = 20; total_tokens = 25;
+    total_duration = Some 2.0;
+  } in
+  let meta = Types.(wrap_result ~raw_response:"" ~model:"llama3" ~provider:"ollama" ~usage
+    (assistant_msg "ok")) in
+  let s = Monitor.format_usage meta in
+  (* Expect "Tokens: 5 in, 20 out (10.00 toks/s)" *)
+  assert (s = "Tokens: 5 in, 20 out (10.00 toks/s)")
+
 let run_tests () =
   Printf.printf "Running tests...\n";
   test_memory_buffer ();
@@ -98,6 +135,8 @@ let run_tests () =
   test_tool_touch ();
   test_tool_mkdir ();
   test_tool_ls ();
+  test_usage_openai_parsing ();
+  test_monitor_format_usage ();
   Printf.printf "All tests passed.\n"
 
 let () = run_tests ()

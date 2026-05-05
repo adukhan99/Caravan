@@ -170,6 +170,14 @@ let messages_to_json msgs =
 
 (* Metadata wrapper *)
 
+(** Token consumption and timing metadata from a provider response. *)
+type usage = {
+  prompt_tokens     : int;
+  completion_tokens : int;
+  total_tokens      : int;
+  total_duration    : float option; (** Total time in seconds, if provided by backend *)
+}
+
 (** Structured result type wrapping a value with metadata. *)
 type 'a result_with_meta = {
   value        : 'a;
@@ -177,10 +185,11 @@ type 'a result_with_meta = {
   model        : string;
   provider     : string;
   finish_reason: string option;
+  usage        : usage option;
 }
 
-let wrap_result ~raw_response ~model ~provider ?finish_reason value =
-  { value; raw_response; model; provider; finish_reason }
+let wrap_result ~raw_response ~model ~provider ?finish_reason ?usage value =
+  { value; raw_response; model; provider; finish_reason; usage }
 
 (* Generation options *)
 

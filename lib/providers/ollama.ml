@@ -81,6 +81,21 @@ let post_json url body =
   let* body_str = Cohttp_lwt.Body.to_string body_lwt in
   Lwt.return (status, body_str)
 
+let parse_usage json =
+  let open Yojson.Safe.Util in
+  let int_opt key = match json |> member key with `Int i -> Some i | _ -> None in
+  match int_opt "eval_count", int_opt "prompt_eval_count" with
+  | Some completion_tokens, Some prompt_tokens ->
+    let total_tokens = prompt_tokens + completion_tokens in
+    let total_duration =
+      match json |> member "total_duration" with
+      | `Int ns   -> Some (float_of_int ns /. 1e9)
+      | `Float ns -> Some (ns /. 1e9)
+      | _         -> None
+    in
+    Some OrchCaml.Types.{ prompt_tokens; completion_tokens; total_tokens; total_duration }
+  | _ -> None
+
 let parse_complete_response body_str model =
   let json = Yojson.Safe.from_string body_str in
   let open Yojson.Safe.Util in
@@ -99,8 +114,9 @@ let parse_complete_response body_str model =
       ) l)
     | _ -> None
   in
+  let usage = parse_usage json in
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
-  wrap_result ~raw_response:body_str ~model ~provider:"ollama" ?finish_reason:finish reply_msg
+  wrap_result ~raw_response:body_str ~model ~provider:"ollama" ?finish_reason:finish ?usage reply_msg
 
 module Ollama = struct
   type nonrec config = config
@@ -160,6 +176,7 @@ module Ollama = struct
                   safe_push None;
                   let full   = Buffer.contents buf in
                   let finish = json |> member "done_reason" |> to_string_option in
+                  let usage  = parse_usage json in
                   let tool_calls =
                     match msg_json |> member "tool_calls" with
                     | `Null -> None
@@ -175,7 +192,7 @@ module Ollama = struct
                   let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
                   Lwt.wakeup meta_resolver
                     (wrap_result ~raw_response:full ~model:cfg.model
-                       ~provider:"ollama" ?finish_reason:finish reply)
+                       ~provider:"ollama" ?finish_reason:finish ?usage reply)
                 end
               with exn -> 
                 Printf.eprintf "[Ollama Stream Parse Error]: %s\nLine: %s\n%!" (Printexc.to_string exn) line)

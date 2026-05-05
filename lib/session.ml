@@ -123,10 +123,10 @@ let rec run_conversations sess =
   let* outcome = run_turn_step sess result.value in
   match outcome with
   | Continue sess' -> run_conversations sess'
-  | Done (sess', content) -> Lwt.return (sess', content)
+  | Done (sess', _content) -> Lwt.return (sess', result)
 
 (** [turn sess user_input] sends a user message and returns the updated
-    session and the assistant response as a plain string (non-streaming). *)
+    session and the assistant response metadata (non-streaming). *)
 let turn sess user_input =
   let user = user_msg user_input in
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
@@ -144,11 +144,11 @@ let rec run_conversations_stream sess ~on_token =
   let* outcome = run_turn_step sess result_with_meta.value in
   match outcome with
   | Continue sess' -> run_conversations_stream sess' ~on_token
-  | Done (sess', content) -> Lwt.return (sess', content)
+  | Done (sess', _content) -> Lwt.return (sess', result_with_meta)
 
 (** [turn_stream sess user_input ~on_token] is like [turn] but streams
     tokens via [on_token] as they arrive. Returns the updated session and
-    full response when the stream is exhausted. *)
+    metadata when the stream is exhausted. *)
 let turn_stream sess user_input ~on_token =
   let user = user_msg user_input in
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in

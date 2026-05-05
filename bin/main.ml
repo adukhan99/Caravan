@@ -328,10 +328,13 @@ let repl st =
       let* () =
         Lwt.catch
           (fun () ->
-            let* (new_sess, response) = Session.turn_stream st.session line ~on_token in
+            let* (new_sess, result) = Session.turn_stream st.session line ~on_token in
             st.session <- new_sess;
-            if is_tty then print_newline ();
-            if not is_tty then print_endline response;
+            if is_tty then begin
+              print_newline ();
+              println_ansi (dim (Monitor.format_usage result))
+            end;
+            if not is_tty then print_endline result.value.content;
             Lwt.return_unit)
           (fun exn ->
             if is_tty then print_newline ();
@@ -360,8 +363,9 @@ let cmd_complete ~model ~use_openai ~openai_base ~system prompt_text =
   let sess = match system with Some s -> Session.set_system sess s | None -> sess in
   Lwt.catch
     (fun () ->
-      let* (_sess, _result) = Session.turn_stream sess prompt_text ~on_token in
+      let* (_sess, result) = Session.turn_stream sess prompt_text ~on_token in
       print_newline ();
+      if is_tty then println_ansi (dim (Monitor.format_usage result));
       (* Yield briefly so background async task finishes before scheduler exits *)
       Lwt_unix.sleep 0.05)
     (function

@@ -1,8 +1,4 @@
-(** OrchCaml.Config — Centralized TOML configuration reader.
-
-    Parses ~/.orchcaml/config.toml to fetch default values for CLI arguments
-    (base_url, system prompt, model, provider, API keys).
-*)
+(** Centralized TOML configuration reader. *)
 
 let config_path = Filename.concat (Sys.getenv "HOME") ".orchcaml/config.toml"
 

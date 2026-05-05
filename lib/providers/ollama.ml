@@ -1,16 +1,7 @@
-(** OrchCaml.Providers.Ollama — Ollama local LLM backend.
-
-    Talks to the Ollama REST API at [http://localhost:11434] (configurable).
-    Supports both non-streaming [complete] and streaming [stream] calls.
-    Uses cohttp-eio for direct-style, fiber-friendly HTTP.
-
-    API reference: https://github.com/ollama/ollama/blob/main/docs/api.md
-*)
+(** Ollama local LLM backend. *)
 
 open OrchCaml.Types
 open OrchCaml.Provider
-
-(* Config type *)
 
 type config = {
   host    : string;
@@ -28,8 +19,6 @@ let make_config
     ~model
     () =
   { host; port; model; options; timeout }
-
-(* Helpers *)
 
 let base_url cfg =
   Printf.sprintf "http://%s:%d" cfg.host cfg.port
@@ -217,11 +206,9 @@ module Ollama = struct
 
 end
 
-(** Convenience constructor: pack an Ollama provider. *)
 let make_provider ?(host="localhost") ?(port=11434)
     ?(options=OrchCaml.Types.default_options) ?(timeout=120.) ~model () =
   let cfg = make_config ~host ~port ~options ~timeout ~model () in
   Provider ((module Ollama), cfg)
 
-(** Expose as a PROVIDER-signed module for explicit use. *)
 let provider : (module PROVIDER with type config = config) = (module Ollama)

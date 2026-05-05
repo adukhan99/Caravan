@@ -1,43 +1,20 @@
-(** OrchCaml.Tool — Formal module signature for tools.
-
-    Defines the signature for Tools to ensure type safety,
-    composability, and discoverability within the framework.
-*)
+(** Tool interface and execution. *)
 
 module type TOOL = sig
-  (** The name of the tool, used by the LLM to invoke it. *)
   val name : string
-
-  (** A description of what the tool does. *)
   val description : string
 
-  (** The input type required by the tool. *)
   type input
-
-  (** The output type produced by the tool. *)
   type output
 
-  (** Generates the JSON Schema describing the inputs for LLM discovery. *)
   val json_schema : unit -> Yojson.Safe.t
-
-  (** Parses the JSON arguments into the tool's input type. *)
   val parse_args : Yojson.Safe.t -> (input, string) result
-
-  (** Formats the output of the tool into a string for the LLM. *)
   val format_output : output -> string
 
-  (** The effect that represents execution of this tool.
-      By tracking this as an effect, handlers can manage logging, retries,
-      or mocks around tool execution without polluting the business logic. *)
   type _ Effect.t += Exec : input -> output Effect.t
-
-  (** An effect-based execution function that performs the tool logic. 
-      Typically this will construct the `Exec` effect and perform it. *)
   val execute : input -> output
 end
 
-(** A packed (existential) tool — lets you store tools of different
-    input/output types in the same data structure. *)
 type packed_tool =
   | Tool : (module TOOL with type input = 'i and type output = 'o) -> packed_tool
 
@@ -67,4 +44,3 @@ let dispatch (Tool (module T)) (args_json : string) : string =
             }
         in
         T.format_output output
-

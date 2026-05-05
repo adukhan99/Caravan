@@ -1,15 +1,5 @@
 open OrchCaml
 
-(** OrchCaml.Tools.Search — Web search tool.
-
-    Config precedence: SEARCH_API_KEY env var > [tools] search_api_key in config.toml.
-
-    The tool receives its Eio net capability via the SEARCH_NET_CAPABILITY
-    effect handler installed by the REPL entry point. If no handler is
-    installed (e.g. in tests), it falls back to a blocking Unix HTTP call
-    using Eio_main.run internally on a fresh domain.
-*)
-
 module Search : Tool.TOOL = struct
 
   type input = { query : string; num_results : int }
@@ -66,13 +56,11 @@ module Search : Tool.TOOL = struct
 
   type _ Effect.t += Exec : input -> output Effect.t
 
-  (* Config key retrieval: env var first, then toml. *)
   let get_api_key () =
     match Sys.getenv_opt "SEARCH_API_KEY" with
     | Some k when k <> "" -> Some k
     | _ -> Config.get_string "search_api_key"
 
-  (** Perform the HTTP search using the Eio net capability. *)
   let do_search net { query; num_results } =
     let encoded_query = Uri.pct_encode query in
     let url = Printf.sprintf
@@ -84,8 +72,6 @@ module Search : Tool.TOOL = struct
       ("Accept",                "application/json");
       ("X-Subscription-Token",  match get_api_key () with Some k -> k | None -> "");
     ] in
-    (* We need HTTPS for Brave Search, so we use eio-ssl. 
-       Note: search tool uses its own eio-ssl wrapper since it doesn't share provider config. *)
     let https uri (sock : [ `Generic ] Eio.Net.stream_socket_ty Eio.Resource.t) =
       let host = Uri.host uri |> Option.value ~default:"" in
       let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
@@ -119,7 +105,6 @@ module Search : Tool.TOOL = struct
       in
       Ok results
 
-  (** Effect used to pass the net capability into the tool's execute call. *)
   type _ Effect.t += Get_net : _ Eio.Net.t Effect.t
 
   let execute input =
@@ -129,11 +114,9 @@ module Search : Tool.TOOL = struct
         "No Search API key found. Set SEARCH_API_KEY or add \
          search_api_key under [tools] in ~/.orchcaml/config.toml."
     | Some _api_key ->
-      (* Try to get net capability via effect; fall back to a fresh Eio domain. *)
       (match Effect.perform Get_net with
        | net -> do_search net input
        | exception Effect.Unhandled _ ->
-         (* Fallback: spin up a new Eio event loop on a fresh domain. *)
          Domain.join (Domain.spawn (fun () ->
            Eio_main.run (fun env ->
              do_search env#net input

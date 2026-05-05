@@ -1,22 +1,8 @@
-(** OrchCaml — Interactive TUI / REPL entry point.
-
-    An interactive sessions manager for the OrchCaml orchestration framework.
-    Talks to Ollama by default; supports OpenAI-compatible providers via flags.
-    Uses Eio_main.run as the top-level event loop.
-
-    Usage:
-      orchcaml                        -- start interactive REPL (Ollama default)
-      orchcaml --model llama3.2       -- choose model
-      orchcaml --provider openai      -- use OpenAI (needs OPENAI_API_KEY)
-      orchcaml complete "question"    -- non-interactive single completion
-      orchcaml models                 -- list available models
-*)
+(** Interactive TUI / REPL entry point. *)
 
 open OrchCaml
 open OrchCaml.Types
 open OrchCaml.Config
-
-(* ANSI colour helpers *)
 
 let ansi code s = Printf.sprintf "\027[%sm%s\027[0m" code s
 let bold s    = ansi "1" s
@@ -29,11 +15,9 @@ let red s     = ansi "1;31" s
 let white s   = ansi "0;97" s
 let blue s    = ansi "0;34" s
 
-(* Store whether we have a real TTY (for colour/ANSI). *)
 let is_tty = Unix.isatty Unix.stdout
 
 let print_ansi s = if is_tty then print_string s else
-  (* Strip ANSI for non-interactive use — simple regex approach *)
   let re = Re.compile (Re.seq [
     Re.char '\027'; Re.char '[';
     Re.rep (Re.compl [Re.char 'm']); Re.char 'm'
@@ -42,8 +26,6 @@ let print_ansi s = if is_tty then print_string s else
 
 let println_ansi s = print_ansi s; print_char '\n'
 
-(* Banner *)
-
 let print_banner () =
   if is_tty then begin
     println_ansi (cyan "╔═════════════════════════════════════════════════╗");
@@ -51,8 +33,6 @@ let print_banner () =
     println_ansi (cyan "╚═════════════════════════════════════════════════╝");
     print_newline ()
   end
-
-(* Slash command help *)
 
 let get_available_tools () =
   let tools_dir = "lib/tools" in
@@ -107,15 +87,11 @@ let print_help () =
   ) cmds;
   print_newline ()
 
-(* Provider construction helpers *)
-
 let make_ollama_provider model =
   OrchCamlProviders.Ollama.make_provider ~model ()
 
 let make_openai_provider ?base_url model =
   OrchCamlProviders.Openai.make_provider ?base_url ~model ()
-
-(* REPL state *)
 
 type repl_state = {
   mutable session  : Session.t;
@@ -147,18 +123,13 @@ let rebuild_session st =
   st.provider <- provider;
   st.session  <- Session.create ~tools:all_tools st.model provider
 
-(* Token streaming callback *)
-
 let on_token token =
   print_ansi (green token);
   flush stdout
 
-(* Slash command handler *)
-
 let handle_slash_command net st line =
   let parts = String.split_on_char ' ' (String.trim line) in
   match parts with
-
   | ["/quit"] | ["/exit"] | ["/q"] ->
     println_ansi (dim "\nGoodbye.");
     exit 0
@@ -281,8 +252,6 @@ let handle_slash_command net st line =
 
   | [] -> ()
 
-(* The main REPL loop *)
-
 let repl net st =
   let prompt () =
     if is_tty then
@@ -293,7 +262,6 @@ let repl net st =
     else ();
     flush stdout
   in
-  (* Use Unix stdin directly in a simple line-read loop; Eio wraps stdin as a flow *)
   let rec loop () =
     prompt ();
     let line_opt =
@@ -309,10 +277,8 @@ let repl net st =
       handle_slash_command net st line;
       loop ()
     end else begin
-      (* Print assistant label *)
       if is_tty then
         println_ansi (Printf.sprintf "\n%s" (bold (green "Assistant:")));
-      (* Stream response — catch provider errors so the REPL survives 4xx/5xx *)
       (try
         let (new_sess, result) = Session.turn_stream net st.session line ~on_token in
         st.session <- new_sess;
@@ -333,9 +299,6 @@ let repl net st =
   in
   loop ()
 
-(* Subcommands *)
-
-(** [cmd_complete] — single non-interactive completion. *)
 let cmd_complete net ~model ~use_openai ~openai_base ~system prompt_text =
   let provider =
     if use_openai then make_openai_provider ~base_url:openai_base model
@@ -350,7 +313,6 @@ let cmd_complete net ~model ~use_openai ~openai_base ~system prompt_text =
   with exn ->
     Printf.eprintf "[OrchCaml] Error: %s\n%!" (Printexc.to_string exn))
 
-(** [cmd_models] — list models for a provider. *)
 let cmd_models net ~use_openai ~openai_base ~model () =
   let provider =
     if use_openai then make_openai_provider ~base_url:openai_base model
@@ -369,24 +331,20 @@ let cmd_models net ~use_openai ~openai_base ~model () =
     Printf.eprintf "[OrchCaml] Error: %s\n%!" msg;
     exit 1)
 
-(* Cmdliner CLI setup *)
-
 open Cmdliner
 
 let model_arg =
-  let doc = "Model name to use. For Ollama: the model tag (e.g. llama3.2, gpt-oss:20b). \
-             For OpenAI: the model ID (e.g. gpt-4o)." in
+  let doc = "Model name to use." in
   let default = match get_string "model" with Some v -> v | None -> "gpt-oss:20b" in
   Arg.(value & opt string default & info ["m"; "model"] ~docv:"MODEL" ~doc)
 
 let provider_arg =
-  let doc = "Provider to use: 'ollama' (default, local) or 'openai'." in
+  let doc = "Provider to use: 'ollama' or 'openai'." in
   let default = match get_string "provider" with Some v -> v | None -> "ollama" in
   Arg.(value & opt string default & info ["p"; "provider"] ~docv:"PROVIDER" ~doc)
 
 let openai_base_arg =
-  let doc = "Base URL for OpenAI-compatible API. Default: https://api.openai.com/v1. \
-             Override for Groq, Together, local proxies, etc." in
+  let doc = "Base URL for OpenAI-compatible API." in
   let default = match get_string "base_url" with Some v -> v | None -> "https://api.openai.com/v1" in
   Arg.(value & opt string default
        & info ["base-url"] ~docv:"URL" ~doc)
@@ -430,13 +388,11 @@ let run_repl model provider_str openai_base system =
     repl net st
   )
 
-(* ── Interactive REPL command ── *)
 let repl_cmd =
   let doc = "Start an interactive chat session (default command)." in
   let info = Cmd.info "repl" ~doc in
   Cmd.v info Term.(const run_repl $ model_arg $ provider_arg $ openai_base_arg $ system_arg)
 
-(* ── Single completion command ── *)
 let complete_cmd =
   let prompt_arg =
     let doc = "The prompt text to send." in
@@ -448,11 +404,10 @@ let complete_cmd =
       cmd_complete env#net ~model ~use_openai ~openai_base ~system prompt
     )
   in
-  let doc = "Send a single prompt and print the response (non-interactive)." in
+  let doc = "Send a single prompt and print the response." in
   let info = Cmd.info "complete" ~doc in
   Cmd.v info Term.(const run $ model_arg $ provider_arg $ openai_base_arg $ system_arg $ prompt_arg)
 
-(* ── List models command ── *)
 let models_cmd =
   let run model provider_str openai_base =
     let use_openai = provider_str = "openai" in
@@ -464,34 +419,12 @@ let models_cmd =
   let info = Cmd.info "models" ~doc in
   Cmd.v info Term.(const run $ model_arg $ provider_arg $ openai_base_arg)
 
-(* Entry point *)
-
 let () =
-  let doc = "A typed LLM orchestration framework and interactive REPL." in
+  let doc = "Typed LLM orchestration framework and interactive REPL." in
   let info = Cmd.info "orchcaml"
     ~doc
     ~version:"0.1.0"
-    ~man:[
-      `S "DESCRIPTION";
-      `P "OrchCaml is a functional, type-safe LLM orchestration framework for OCaml. \
-          It provides typed pipelines (Template → LLM → Parser), pluggable providers \
-          (Ollama, OpenAI-compatible), conversation memory, and this interactive REPL.";
-      `S "EXAMPLES";
-      `P "Start an interactive session with your local Ollama:";
-      `Pre "  orchcaml";
-      `P "Use a specific model:";
-      `Pre "  orchcaml --model llama3.2";
-      `P "Non-interactive completion:";
-      `Pre "  orchcaml complete \"What is a monad?\"";
-      `P "List available Ollama models:";
-      `Pre "  orchcaml models";
-      `P "Use OpenAI:";
-      `Pre "  OPENAI_API_KEY=sk-... orchcaml --provider openai --model gpt-4o";
-      `P "Use a generic OpenAI-compatible API (e.g. OpenRouter):";
-      `Pre "  OPENAI_API_KEY=sk-... orchcaml --provider openai --base-url https://openrouter.ai/api/v1 --model meta-llama/llama-3-8b-instruct";
-    ]
   in
-  (* Default to 'repl' if no subcommand is given *)
   let default_cmd = Term.(const run_repl $ model_arg $ provider_arg $ openai_base_arg $ system_arg)
   in
   let cmd = Cmd.group ~default:default_cmd info

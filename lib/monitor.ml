@@ -1,14 +1,12 @@
-(** OrchCaml.Monitor — LLM resource metric helpers. *)
+(** LLM resource metric helpers. *)
 
 open Types
 
-(** Tokens per second for completion output. [None] if duration is absent. *)
 let toks_per_sec (u : usage) : float option =
   match u.total_duration with
   | Some d when d > 0.0 -> Some (float_of_int u.completion_tokens /. d)
   | _ -> None
 
-(** One-line usage summary for display. *)
 let format_usage (meta : 'a result_with_meta) : string =
   match meta.usage with
   | None -> "Usage: unknown"

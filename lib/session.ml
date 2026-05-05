@@ -1,21 +1,12 @@
-(** OrchCaml.Session — Stateful multi-turn conversation sessions.
-
-    A [session] combines:
-    - a [Provider.packed_provider] (the LLM backend),
-    - a [Memory.Buffer.t] (conversation history),
-    - metadata (model name, system prompt, generation options).
-
-    All functions are direct-style (no Lwt.t). The Eio [net] capability
-    is passed explicitly to functions that perform I/O. *)
+(** Stateful multi-turn conversation sessions. *)
 
 open Types
 
-(** Session configuration. *)
 type config = {
   model       : string;
-  system      : string option;     (** Optional system prompt *)
+  system      : string option;
   options     : gen_options;
-  memory_size : int;               (** Sliding window size, 0 = unlimited *)
+  memory_size : int;
 }
 
 let default_config model = {
@@ -25,7 +16,6 @@ let default_config model = {
   memory_size = 40;
 }
 
-(** A live session. *)
 type t = {
   cfg      : config;
   provider : Provider.packed_provider;
@@ -34,7 +24,6 @@ type t = {
   tools    : Tool.packed_tool list;
 }
 
-(** Create a new session. *)
 let create ?(config = fun m -> default_config m) ?(tools=[]) model provider =
   let cfg = config model in
   let window = if cfg.memory_size = 0 then max_int else cfg.memory_size in
@@ -46,7 +35,6 @@ let create ?(config = fun m -> default_config m) ?(tools=[]) model provider =
     tools;
   }
 
-(** [set_system sess text] updates the system prompt and returns the new session. *)
 let set_system sess text =
   let cfg =
     if String.trim text = "" then
@@ -56,17 +44,11 @@ let set_system sess text =
   in
   { sess with cfg }
 
-(** [clear sess] clears conversation history (not the config) and returns the new session. *)
 let clear sess =
   { sess with memory = Memory.Buffer.clear sess.memory; turn_idx = 0 }
 
-(** [history sess] returns the current message history. *)
 let history sess = Memory.Buffer.get sess.memory
 
-(* Shared helpers *)
-
-(** Build the full message list to send to the LLM, prepending the
-    system prompt if it is not already the first message. *)
 let history_for_llm sess =
   match sess.cfg.system with
   | None     -> Memory.Buffer.get sess.memory
@@ -76,8 +58,6 @@ let history_for_llm sess =
      | { role = System; _ } :: _ -> Memory.Buffer.get sess.memory
      | rest -> sm :: rest)
 
-(** [execute_tool_calls net sess tcs] dispatches all requested tool calls and
-    returns the resulting [Tool] messages. *)
 let execute_tool_calls _net sess tcs =
   List.map (fun tc ->
     match List.find_opt (fun t -> Tool.name_of_packed t = tc.name) sess.tools with
@@ -92,15 +72,9 @@ let execute_tool_calls _net sess tcs =
       tool_msg tc.id output_str
   ) tcs
 
-(** After the LLM responds with [reply], store it in memory, dispatch
-    any tool calls, and return:
-    - [None]      — the loop should continue (tool calls were made)
-    - [Some]      — the loop should stop (plain text reply).
-
-    The returned session is always updated with the latest memory. *)
 type step_outcome =
-  | Continue of t          (** tool calls dispatched; keep looping *)
-  | Done     of t * string (** terminal reply — updated session + content *)
+  | Continue of t
+  | Done     of t * string
 
 let run_turn_step net sess (reply : chat_message) =
   let final_memory = Memory.Buffer.add sess.memory reply in
@@ -115,8 +89,6 @@ let run_turn_step net sess (reply : chat_message) =
   | _ ->
     Done (new_sess, reply.content)
 
-(* Non-streaming conversation loop *)
-
 let rec run_conversations net sess =
   let result = Provider.complete_packed net ~tools:sess.tools sess.provider (history_for_llm sess) in
   let outcome = run_turn_step net sess result.value in
@@ -124,14 +96,10 @@ let rec run_conversations net sess =
   | Continue sess' -> run_conversations net sess'
   | Done (sess', _content) -> (sess', result)
 
-(** [turn net sess user_input] sends a user message and returns the updated
-    session and the assistant response metadata (non-streaming). *)
 let turn net sess user_input =
   let user = user_msg user_input in
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
   run_conversations net sess'
-
-(* Streaming conversation loop *)
 
 let rec run_conversations_stream net sess ~on_token =
   let result_with_meta =
@@ -142,17 +110,11 @@ let rec run_conversations_stream net sess ~on_token =
   | Continue sess' -> run_conversations_stream net sess' ~on_token
   | Done (sess', _content) -> (sess', result_with_meta)
 
-(** [turn_stream net sess user_input ~on_token] is like [turn] but streams
-    tokens via [on_token] as they arrive. Returns the updated session and
-    metadata when the stream is exhausted. *)
 let turn_stream net sess user_input ~on_token =
   let user = user_msg user_input in
   let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
   run_conversations_stream net sess' ~on_token
 
-(* Export / pretty-print *)
-
-(** Serialise the session history to JSON. *)
 let export_json sess =
   `Assoc [
     ("model",    `String sess.cfg.model);
@@ -162,7 +124,6 @@ let export_json sess =
     ("history",  Memory.Buffer.to_json sess.memory);
   ]
 
-(** Pretty-print the session history. *)
 let pp_history fmt sess =
   List.iter (fun msg ->
     let role_str = role_to_string msg.role in

@@ -1,15 +1,10 @@
-(** OrchCaml.Types — Core message and type definitions.
+(** Message and type definitions. *)
 
-    All LLM interactions are modelled as typed messages flowing through
-    a pipeline. This module defines the foundational types used throughout
-    the framework. *)
-
-(** The role of a participant in a conversation. *)
 type role =
-  | System      (** The system / instruction prompt *)
-  | User        (** A human turn *)
-  | Assistant   (** An LLM response turn *)
-  | Tool of string  (** A tool/function call result, carrying the call-id *)
+  | System
+  | User
+  | Assistant
+  | Tool of string
 
 let role_to_string = function
   | System       -> "system"
@@ -17,7 +12,6 @@ let role_to_string = function
   | Assistant    -> "assistant"
   | Tool name    -> "tool:" ^ name
 
-(** Total parse — returns [Error] instead of raising. *)
 let role_of_string_result = function
   | "system"    -> Ok System
   | "user"      -> Ok User
@@ -27,7 +21,6 @@ let role_of_string_result = function
     Ok (Tool (String.sub s 5 (String.length s - 5)))
   | s           -> Error ("Unknown role: " ^ s)
 
-(** Legacy alias — kept for convenience; prefer [role_of_string_result]. *)
 let role_of_string s =
   match role_of_string_result s with
   | Ok r    -> r
@@ -36,29 +29,19 @@ let role_of_string s =
 let ( >>= ) r f = Result.bind r f
 let ( >|= ) r f = Result.map f r
 
-(* Refined message ADT *)
-
-(** A tool call requested by an assistant turn. *)
 type tool_call = {
   id   : string;
   name : string;
   args : string;
 }
 
-(** A single message — role-specific invariants are enforced by the
-    smart constructors below.  The record is intentionally kept flat so
-    that existing serialisation code does not change. *)
+(** A single message in a conversation. *)
 type chat_message = {
   role       : role;
   content    : string;
   timestamp  : float;
-  (** [tool_calls] is [Some _] only on [Assistant] messages that request
-      tool invocations.  Callers SHOULD use [assistant_tool_msg] rather
-      than constructing this field directly. *)
   tool_calls : tool_call list option;
 }
-
-(* Smart constructors (enforce role/field invariants) *)
 
 let make_message ?tool_calls role content = {
   role;
@@ -71,17 +54,10 @@ let system_msg    content          = make_message System    content
 let user_msg      content          = make_message User      content
 let assistant_msg content          = make_message Assistant content
 
-(** [assistant_tool_msg ~tool_calls content] constructs an [Assistant]
-    message that carries one or more tool call requests.  [tool_calls]
-    MUST be non-empty; use [assistant_msg] for plain text replies. *)
 let assistant_tool_msg ~tool_calls content =
   make_message ~tool_calls Assistant content
 
-(** [tool_msg call_id content] constructs a [Tool] result message.
-    [call_id] carries the id of the tool call being answered. *)
 let tool_msg call_id content = make_message (Tool call_id) content
-
-(* JSON serialisation *)
 
 let tool_call_to_json tc =
   `Assoc [
@@ -109,7 +85,6 @@ let chat_message_to_json msg =
   in
   `Assoc base
 
-(** Total — returns [Error] on malformed JSON instead of raising. *)
 let tool_call_of_json_result json =
   try
     let open Yojson.Safe.Util in
@@ -126,7 +101,6 @@ let tool_call_of_json json =
   | Ok tc   -> tc
   | Error e -> failwith e
 
-(** Total — returns [Error] on malformed JSON. *)
 let chat_message_of_json_result json =
   try
     let open Yojson.Safe.Util in
@@ -168,17 +142,13 @@ let chat_message_of_json json =
 let messages_to_json msgs =
   `List (List.map chat_message_to_json msgs)
 
-(* Metadata wrapper *)
-
-(** Token consumption and timing metadata from a provider response. *)
 type usage = {
   prompt_tokens     : int;
   completion_tokens : int;
   total_tokens      : int;
-  total_duration    : float option; (** Total time in seconds, if provided by backend *)
+  total_duration    : float option;
 }
 
-(** Structured result type wrapping a value with metadata. *)
 type 'a result_with_meta = {
   value        : 'a;
   raw_response : string;
@@ -190,8 +160,6 @@ type 'a result_with_meta = {
 
 let wrap_result ~raw_response ~model ~provider ?finish_reason ?usage value =
   { value; raw_response; model; provider; finish_reason; usage }
-
-(* Generation options *)
 
 type gen_options = {
   temperature  : float option;
@@ -214,4 +182,3 @@ let default_options = {
 let options
     ?temperature ?top_p ?top_k ?max_tokens ?(stop=[]) ?seed () =
   { temperature; top_p; top_k; max_tokens; stop; seed }
-

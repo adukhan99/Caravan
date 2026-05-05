@@ -47,7 +47,6 @@ module Ls : Tool.TOOL with type input = string and type output = string = struct
           let prefix = if Sys.file_exists full && Sys.is_directory full then "d " else "f " in
           prefix ^ name
         ) entries in
-        (* Prepend cwd so the LLM knows the resolved absolute path *)
         let header = Printf.sprintf "# ls %s  (cwd: %s)" path (Sys.getcwd ()) in
         String.concat "\n" (header :: lines)
       end

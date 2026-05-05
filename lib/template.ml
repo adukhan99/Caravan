@@ -1,21 +1,15 @@
-(** OrchCaml.Template — Prompt template engine.
+(** Prompt template engine. *)
 
-    Supports [{{variable}}] interpolation with optional variable schema
-    validation. Pure OCaml, no external dependencies. *)
-
-(** An AST node for prompt templates. *)
 type ast_node =
   | Text of string
   | Var of string
 
-(** A compiled template with an AST and extracted variable names. *)
 type t = {
   source    : string;
   ast       : ast_node list;
   variables : string list;
 }
 
-(** Regular expression matching [{{varname}}] placeholders. *)
 let var_re = Re.compile (Re.seq [
   Re.str "{{";
   Re.rep1 Re.space |> Re.opt;
@@ -24,7 +18,6 @@ let var_re = Re.compile (Re.seq [
   Re.str "}}";
 ])
 
-(** Parse a template string into an AST, extracting the names of all variables. *)
 let of_string source =
   let ast =
     Re.split_full var_re source
@@ -41,8 +34,6 @@ let of_string source =
   in
   { source; ast; variables }
 
-(** [render ~vars tmpl] substitutes each [{{key}}] with its value from [vars].
-    Returns [Error msg] (instead of raising) when a required variable is missing. *)
 let render ~vars tmpl =
   let missing =
     List.filter (fun v -> not (List.mem_assoc v vars)) tmpl.variables
@@ -56,29 +47,22 @@ let render ~vars tmpl =
     ) tmpl.ast
     |> String.concat "")
 
-(** [render_exn ~vars tmpl] like [render] but raises on missing vars.
-    Kept for backwards compatibility. *)
 let render_exn ~vars tmpl =
   match render ~vars tmpl with
   | Ok s    -> s
   | Error e -> invalid_arg e
 
-(** [render_string ~vars src] compiles and renders in one step. *)
 let render_string ~vars src = render ~vars (of_string src)
 
-(** [variables tmpl] returns the list of variable names in [tmpl]. *)
 let variables tmpl = tmpl.variables
 
-(** [source tmpl] returns the original template string. *)
 let source tmpl = tmpl.source
 
-(** Pretty-print a template for debugging. *)
 let pp fmt tmpl =
   Format.fprintf fmt "@[<v>Template {@ source = %S;@ variables = [%s]@]}"
     tmpl.source
     (String.concat "; " (List.map (fun v -> "\"" ^ v ^ "\"") tmpl.variables))
 
-(** A multi-message chat template — maps roles to template strings. *)
 type chat_template = {
   system_tmpl : t option;
   human_tmpl  : t;
@@ -89,7 +73,6 @@ let chat_template ?system human = {
   human_tmpl  = of_string human;
 }
 
-(** [render_chat ~vars tmpl] produces [(chat_message list, string) result]. *)
 let render_chat ~vars tmpl =
   let open Types in
   render ~vars tmpl.human_tmpl >>= fun human_content ->
@@ -101,8 +84,6 @@ let render_chat ~vars tmpl =
     render ~vars:sys_vars sys >|= fun sys_str ->
     [ system_msg sys_str; human_msg ]
 
-
-(** [render_chat_exn ~vars tmpl] like [render_chat] but raises on error. *)
 let render_chat_exn ~vars tmpl =
   match render_chat ~vars tmpl with
   | Ok msgs -> msgs

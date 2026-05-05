@@ -1,12 +1,4 @@
-(** OrchCaml.Providers.Openai — OpenAI-compatible LLM backend.
-
-    Works with any OpenAI-compatible API (OpenAI, Groq, Together,
-    Mistral, local OpenAI-proxy, etc.) by setting [base_url].
-    Uses cohttp-eio for direct-style, fiber-friendly HTTP.
-
-    API keys are read from the environment or config file.
-    Look for [(* API_KEY_SOURCE *)] comments to change the source.
-*)
+(** OpenAI-compatible LLM backend. *)
 
 open OrchCaml.Types
 open OrchCaml.Provider
@@ -38,8 +30,6 @@ let make_config
     | None   -> load_api_key_from_env ()
   in
   { base_url; api_key; model; options; org_id = load_org_id () }
-
-(* Helpers *)
 
 let options_to_json_fields (o : gen_options) =
   let opt key f = function None -> [] | Some v -> [(key, f v)] in
@@ -131,7 +121,6 @@ let parse_complete_response body_str model =
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish ?usage reply_msg
 
-(** Wrapper to enable HTTPS connections for cohttp-eio using eio-ssl. *)
 let https uri (sock : [ `Generic ] Eio.Net.stream_socket_ty Eio.Resource.t) =
   let host = Uri.host uri |> Option.value ~default:"" in
   let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
@@ -168,7 +157,6 @@ module Openai = struct
     let headers  = Http.Header.of_list (("Accept", "text/event-stream") :: auth_headers cfg) in
     let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:true) in
     let buf      = Buffer.create 4096 in
-    (* Accumulate tool_call deltas: index -> (id, name, args_buf) *)
     let tool_acc : (int, string * string * Buffer.t) Hashtbl.t = Hashtbl.create 4 in
     let usage_ref = ref None in
     let result_ref = ref None in
@@ -208,20 +196,17 @@ module Openai = struct
             (try
               let json = Yojson.Safe.from_string data in
               let open Yojson.Safe.Util in
-              (* Check for usage chunk *)
               (match json |> member "usage" with
                | `Assoc _ -> usage_ref := parse_usage json
                | _ -> ());
               let choices = json |> member "choices" in
               if choices <> `Null && choices <> `List [] then begin
                 let delta = choices |> index 0 |> member "delta" in
-                (* Accumulate content *)
                 (match delta |> member "content" with
                  | `String token ->
                    Buffer.add_string buf token;
                    on_token token
                  | _ -> ());
-                (* Accumulate tool_calls deltas *)
                 (match delta |> member "tool_calls" with
                  | `List tcs ->
                    List.iter (fun tc ->
@@ -299,8 +284,6 @@ module Openai = struct
 
 end
 
-(** Convenience constructor: pack an OpenAI provider.
-    (* API_KEY_SOURCE: pass ~api_key to override env-var lookup *) *)
 let make_provider
     ?(base_url = "https://api.openai.com/v1")
     ?(options  = OrchCaml.Types.default_options)

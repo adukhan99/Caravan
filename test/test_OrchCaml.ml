@@ -12,7 +12,6 @@ let test_memory_buffer () =
   let mem = Memory.Buffer.add mem m3 in
   
   let hist = Memory.Buffer.get mem in
-  (* Note: we configured window=2, so m1 is expelled but s1 is safely isolated and prepended! *)
   assert (List.length hist = 3);
   let roles = List.map (fun m -> m.Types.role) hist in
   assert (roles = [Types.System; Types.Assistant; Types.User]);
@@ -30,9 +29,6 @@ let test_parser_bool () =
   | _ -> failwith "Bool parser failure"
 
 let test_config () =
-  (* Config is evaluated lazily, but config_path is evaluated at module load.
-     We might not be able to fully mock HOME after load, but we can test get_string_opt
-     with env var precedence. *)
   Unix.putenv "ORCHCAML_DUMMY_KEY" "dummy_val";
   match Config.get_string_opt (Some "ORCHCAML_DUMMY_KEY") "nonexistent" with
   | Some "dummy_val" -> ()
@@ -84,12 +80,10 @@ let test_tool_ls () =
   let tool = Tool.Tool (module OrchCamlTools.Ls.Ls) in
   let res = Tool.dispatch tool json_args in
   
-  (* We just check if it returns some files *)
   if String.length res = 0 then
     failwith ("Tool ls failed, output was empty")
 
 let test_usage_openai_parsing () =
-  (* Simulate the JSON an OpenAI-compatible endpoint would return. *)
   let fake_body = {|
     { "choices": [{"message": {"role": "assistant", "content": "Hi"},
                    "finish_reason": "stop"}],
@@ -122,15 +116,11 @@ let test_monitor_format_usage () =
   let meta = Types.(wrap_result ~raw_response:"" ~model:"llama3" ~provider:"ollama" ~usage
     (assistant_msg "ok")) in
   let s = Monitor.format_usage meta in
-  (* Expect "Tokens: 5 in, 20 out (10.00 toks/s)" *)
   assert (s = "Tokens: 5 in, 20 out (10.00 toks/s)")
 
 let run_tests () =
   Printf.printf "Running tests...\n";
   Eio_main.run (fun env ->
-    (* If any tools need the net capability, we can handle the effect here,
-       or just pass the env where needed. The Search tool falls back to Eio_main internally
-       if no effect handler is present. *)
     test_memory_buffer ();
     test_parser_json ();
     test_parser_bool ();

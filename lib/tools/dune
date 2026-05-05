@@ -4,6 +4,10 @@
   OrchCaml
   unix
   yojson
-  re)
- (modules Read_file Write_file Sed Grep Mkdir Touch Ls))
+  re
+  cohttp-lwt-unix
+  uri
+  lwt
+  lwt.unix)
+ (modules Read_file Write_file Sed Grep Mkdir Touch Ls Search))
 

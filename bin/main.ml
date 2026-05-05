@@ -111,6 +111,7 @@ let all_tools : OrchCaml.Tool.packed_tool list = [
   Tool (module OrchCamlTools.Sed.Sed);
   Tool (module OrchCamlTools.Touch.Touch);
   Tool (module OrchCamlTools.Write_file.Write_file);
+  Tool (module OrchCamlTools.Fetch.Fetch);
 ]
 
 let rebuild_session st =

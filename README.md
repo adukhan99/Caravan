@@ -1,17 +1,21 @@
 # OrchCaml
 
-**OrchCaml** is a functional, type-safe LLM orchestration framework for OCaml. It provides a structured way to build, compose, and deploy LLM pipelines with strong compile-time guarantees.
+**OrchCaml** is a functional, type-safe LLM orchestration framework for OCaml. It provides a structured way to build, compose, and deploy LLM pipelines with strong compile-time guarantees, leveraging OCaml 5's algebraic effects and Eio for concurrency.
 
-Inspired by LangChain but designed with OCaml's type system in mind, OrchCaml models LLM interactions as typed asynchronous streams flowing through composable "chains."
+Inspired by LangChain but designed for the OCaml ecosystem, OrchCaml models LLM interactions as typed functions flowing through composable "chains."
 
 ## Key Features
 
-- **Typed Chains**: Compose pipelines using the `|>>` operator (asynchronous bind). Every step is a typed function `'a -> 'b Lwt.t`.
-- **Pluggable Providers**: Support for **Ollama** (local) and **OpenAI-compatible** APIs (Groq, Together, etc.). Swap backends with a single line of code.
+- **Typed Chains**: Compose pipelines using the `|>>` operator (Result bind). Every step is a typed function `'a -> ('b, string) result`.
+- **Eio-Powered**: Built on **Eio** for high-performance, multicore-ready asynchronous I/O.
+- **Algebraic Effects**: Uses OCaml 5 effects for clean, decoupled tool execution and provider interactions.
+- **Autonomous Agents**: Support for ReAct-style agentic loops that can use tools to solve complex tasks.
+- **Extensible Tools**: Define tools with simple JSON schemas and type-safe execution.
+- **Pluggable Providers**: Support for **Ollama** (local) and **OpenAI-compatible** APIs (Groq, Together, etc.).
 - **Typed Parsers**: Transform raw LLM strings into structured OCaml data (JSON, lists, booleans, code blocks) with built-in validation.
 - **Prompt Templates**: Logic-less mustache-style templates (`{{variable}}`) with variable extraction and validation.
-- **Conversation Memory**: Built-in sliding window memory for stateful, multi-turn interactions.
-- **Interactive TUI**: A feature-rich REPL for testing prompts, switching models, and exporting sessions.
+- **Conversation Memory**: Built-in sliding window and buffer memory for stateful interactions.
+- **Interactive TUI**: A feature-rich REPL for testing prompts, running agents, and exploring models.
 
 ## Installation
 
@@ -37,21 +41,22 @@ Building a typed pipeline that takes a topic and returns a list of facts:
 open OrchCaml
 open OrchCaml.Chain
 
-let fact_chain provider =
+let fact_chain net provider =
   (* 1. Define the prompt template *)
   prompt_template "List 3 interesting facts about {{topic}}." 
   
   (* 2. Send to the LLM *)
-  |>> llm provider 
+  |>> llm net provider 
   
   (* 3. Parse the output into a string list *)
   |>> parse Parser.numbered_list
 
-let () = Lwt_main.run (
+let () = Eio_main.run (fun env ->
   let provider = OrchCamlProviders.Ollama.make_provider ~model:"llama3.2" () in
-  let%lwt facts = run (fact_chain provider) [("topic", "OCaml")] in
-  List.iter (Printf.printf "- %s\n") facts;
-  Lwt.return_unit
+  let result = run (fact_chain env#net provider) [("topic", "OCaml")] in
+  match result with
+  | Ok facts -> List.iter (Printf.printf "- %s\n") facts
+  | Error e  -> Printf.eprintf "Error: %s\n" e
 )
 ```
 
@@ -75,20 +80,23 @@ dune exec orchcaml complete "Why is functional programming useful?"
 
 Inside the REPL, use these commands to control the session:
 - `/model <name>`: Switch the active model.
+- `/agent <task>`: Start an autonomous agentic loop to solve a task.
 - `/system <text>`: Set a persistent system instruction.
 - `/memory <n>`: Set the sliding window size (0 for unlimited).
-- `/export [file.json]`: Export the full conversation history.
+- `/tools`: List available tools for the agent.
 - `/models`: List models available on the current provider.
+- `/export [file.json]`: Export the full conversation history.
 
 ## Architecture
 
 - **`OrchCaml.Types`**: Foundational types for messages, roles, and results.
 - **`OrchCaml.Chain`**: The core DSL for pipeline composition.
+- **`OrchCaml.Agent`**: Logic for autonomous ReAct loops.
+- **`OrchCaml.Tool`**: Effect-based tool definition and dispatch.
 - **`OrchCaml.Provider`**: Abstract interface for LLM backends.
 - **`OrchCaml.Parser`**: Combinators for turning text into types.
-- **`OrchCaml.Template`**: Simple interpolation engine.
-- **`OrchCaml.Session`**: Higher-level manager for stateful chat.
+- **`OrchCaml.Session`**: Higher-level manager for stateful chat and tools.
 
 ## License
 
-GPLv3
+GPL-3.0-or-later

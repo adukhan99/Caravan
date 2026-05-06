@@ -68,6 +68,7 @@ let print_help () =
   let cmds = [
     "/model <name>",    "Switch the model";
     "/system <text>",   "Set the system prompt";
+    "/agent <task>",    "Start an autonomous agentic loop";
     "/nosystem",        "Clear the system prompt";
     "/memory <n>",      "Set context window (0 = max)";
     "/clear",           "Clear conversation history";
@@ -112,6 +113,7 @@ let all_tools : OrchCaml.Tool.packed_tool list = [
   Tool (module OrchCamlTools.Touch.Touch);
   Tool (module OrchCamlTools.Write_file.Write_file);
   Tool (module OrchCamlTools.Fetch.Fetch);
+  Tool (module OrchCamlTools.Finish.Finish);
 ]
 
 let rebuild_session st =
@@ -137,6 +139,26 @@ let handle_slash_command net st line =
 
   | ["/help"] | ["/?"] ->
     print_help ()
+
+  | "/agent" :: rest ->
+    let task = String.concat " " rest |> String.trim in
+    if task = "" then
+      println_ansi (red "Usage: /agent <task description>")
+    else begin
+      println_ansi (bold (yellow (Printf.sprintf "\n  Starting agentic loop for: %s" task)));
+      (try
+        let result = Agent.run_stream net st.session task ~on_token in
+        match result with
+        | Ok (new_sess, res) ->
+          st.session <- new_sess;
+          print_newline ();
+          println_ansi (bold (green "  ✓ Agent complete."));
+          println_ansi (dim (Monitor.format_usage res))
+        | Error e ->
+          println_ansi (red (Printf.sprintf "  [Agent Error]: %s" e))
+      with exn ->
+        println_ansi (red (Printf.sprintf "  [Error]: %s" (Printexc.to_string exn))))
+    end
 
   | "/model" :: rest ->
     let new_model = String.concat " " rest |> String.trim in

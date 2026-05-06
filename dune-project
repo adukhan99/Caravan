@@ -39,6 +39,10 @@
   (re
    (>= 1.10))
   (otoml
-   (>= 1.0)))
+   (>= 1.0))
+  (ssl
+   (>= 0.7))
+  (eio-ssl
+   (>= 0.3)))
  (tags
   ("llm" "orchestration" "ai" "langchain" "ollama" "openai")))

@@ -11,7 +11,7 @@
 
 (maintainers "OrchCaml Contributors")
 
-(license GPL-3.0)
+(license GPL-3.0-or-later)
 
 (package
  (name OrchCaml)

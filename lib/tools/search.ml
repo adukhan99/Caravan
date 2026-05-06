@@ -72,7 +72,7 @@ module Search : Tool.TOOL = struct
       ("Accept",                "application/json");
       ("X-Subscription-Token",  match get_api_key () with Some k -> k | None -> "");
     ] in
-    let https uri (sock : [ `Generic ] Eio.Net.stream_socket_ty Eio.Resource.t) =
+    let https uri sock =
       let host = Uri.host uri |> Option.value ~default:"" in
       let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
       let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in

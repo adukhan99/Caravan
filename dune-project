@@ -27,7 +27,7 @@
   (eio_main
    (>= 1.0))
   (cohttp-eio
-   (>= 6.0))
+   (>= 6.2.1))
   (uri
    (>= 4.0))
   (yojson

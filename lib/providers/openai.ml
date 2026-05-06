@@ -121,7 +121,7 @@ let parse_complete_response body_str model =
   let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish ?usage reply_msg
 
-let https uri (sock : [ `Generic ] Eio.Net.stream_socket_ty Eio.Resource.t) =
+let https uri sock =
   let host = Uri.host uri |> Option.value ~default:"" in
   let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
   let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in

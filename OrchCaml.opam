@@ -11,10 +11,10 @@ homepage: "https://github.com/adukhan99/OrchCaml"
 bug-reports: "https://github.com/adukhan99/OrchCaml/issues"
 depends: [
   "ocaml"
-  "dune" {>= "3.21" & >= "3.21"}
+  "dune" {>= "3.21"}
   "eio" {>= "1.0"}
   "eio_main" {>= "1.0"}
-  "cohttp-eio" {>= "6.0"}
+  "cohttp-eio" {>= "6.2.1"}
   "uri" {>= "4.0"}
   "yojson" {>= "3.0"}
   "cmdliner" {>= "1.3"}

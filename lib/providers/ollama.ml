@@ -12,7 +12,7 @@ type config = {
 }
 
 let make_config
-    ?(host    = "localhost")
+    ?(host    = "127.0.0.1")
     ?(port    = 11434)
     ?(options = default_options)
     ?(timeout = 120.)
@@ -206,7 +206,7 @@ module Ollama = struct
 
 end
 
-let make_provider ?(host="localhost") ?(port=11434)
+let make_provider ?(host="127.0.0.1") ?(port=11434)
     ?(options=OrchCaml.Types.default_options) ?(timeout=120.) ~model () =
   let cfg = make_config ~host ~port ~options ~timeout ~model () in
   Provider ((module Ollama), cfg)

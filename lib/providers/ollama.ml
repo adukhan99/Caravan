@@ -35,10 +35,38 @@ let options_to_json (o : gen_options) =
      else [("stop", `List (List.map (fun s -> `String s) o.stop))]);
   ])
 
+let ollama_tool_call_to_json (tc : OrchCaml.Types.tool_call) =
+  let args_json = try Yojson.Safe.from_string tc.args with _ -> `Assoc [] in
+  `Assoc [
+    ("type", `String "function");
+    ("function", `Assoc [
+      ("name", `String tc.name);
+      ("arguments", args_json);
+    ]);
+  ]
+
+let ollama_chat_message_to_json (msg : OrchCaml.Types.chat_message) =
+  let base = [
+    ("role",      `String (match msg.role with Tool _ -> "tool" | r -> OrchCaml.Types.role_to_string r));
+    ("content",   if msg.content = "" && msg.tool_calls <> None then `Null else `String msg.content);
+  ] in
+  let base = match msg.tool_calls with
+    | Some tcs -> ("tool_calls", `List (List.map ollama_tool_call_to_json tcs)) :: base
+    | None -> base
+  in
+  let base = match msg.role with
+    | Tool id -> ("tool_call_id", `String id) :: base
+    | _ -> base
+  in
+  `Assoc base
+
+let ollama_messages_to_json msgs =
+  `List (List.map ollama_chat_message_to_json msgs)
+
 let make_body cfg ?tools msgs ~stream =
   let base = [
     ("model",    `String cfg.model);
-    ("messages", messages_to_json msgs);
+    ("messages", ollama_messages_to_json msgs);
     ("stream",   `Bool stream);
     ("options",  options_to_json cfg.options);
   ] in

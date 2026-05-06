@@ -1,4 +1,9 @@
 (library
  (name OrchCamlTools)
  (libraries OrchCaml unix yojson re cohttp-eio eio eio_main uri ssl eio-ssl)
- (modules Read_file Write_file Sed Grep Mkdir Touch Ls Search Fetch Finish))
+ (modules (:standard \ gen_tools)))
+
+(rule
+ (target all_tools.ml)
+ (deps (source_tree .))
+ (action (run ocaml %{dep:gen_tools.ml})))

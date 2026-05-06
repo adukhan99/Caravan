@@ -103,18 +103,7 @@ type repl_state = {
   mutable openai_base : string;
 }
 
-let all_tools : OrchCaml.Tool.packed_tool list = [
-  Tool (module OrchCamlTools.Grep.Grep);
-  Tool (module OrchCamlTools.Ls.Ls);
-  Tool (module OrchCamlTools.Mkdir.Mkdir);
-  Tool (module OrchCamlTools.Read_file.Read_file);
-  Tool (module OrchCamlTools.Search.Search);
-  Tool (module OrchCamlTools.Sed.Sed);
-  Tool (module OrchCamlTools.Touch.Touch);
-  Tool (module OrchCamlTools.Write_file.Write_file);
-  Tool (module OrchCamlTools.Fetch.Fetch);
-  Tool (module OrchCamlTools.Finish.Finish);
-]
+let all_tools : OrchCaml.Tool.packed_tool list = OrchCamlTools.All_tools.all_tools
 
 let rebuild_session st =
   let provider =

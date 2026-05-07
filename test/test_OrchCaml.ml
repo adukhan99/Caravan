@@ -118,6 +118,30 @@ let test_monitor_format_usage () =
   let s = Monitor.format_usage meta in
   assert (s = "Tokens: 5 in, 20 out (10.00 toks/s)")
 
+let test_usage_llama_cpp_parsing () =
+  let fake_body = {|
+    { "choices": [{"message": {"role": "assistant", "content": "Hi"},
+                   "finish_reason": "stop"}],
+      "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}
+    } |} in
+  let json = Yojson.Safe.from_string fake_body in
+  let open Yojson.Safe.Util in
+  let u_json = json |> member "usage" in
+  let usage = Types.{
+    prompt_tokens     = u_json |> member "prompt_tokens"     |> to_int;
+    completion_tokens = u_json |> member "completion_tokens" |> to_int;
+    total_tokens      = u_json |> member "total_tokens"      |> to_int;
+    total_duration    = None;
+  } in
+  let meta = Types.(wrap_result ~raw_response:"" ~model:"llama3" ~provider:"llama_cpp" ~usage
+    (assistant_msg "Hi")) in
+  (match meta.Types.usage with
+   | Some u ->
+     assert (u.Types.prompt_tokens = 5);
+     assert (u.Types.completion_tokens = 5);
+     assert (u.Types.total_tokens = 10)
+   | None -> failwith "usage field was None")
+
 let run_tests () =
   Printf.printf "Running tests...\n";
   Eio_main.run (fun env ->
@@ -130,6 +154,7 @@ let run_tests () =
     test_tool_mkdir ();
     test_tool_ls ();
     test_usage_openai_parsing ();
+    test_usage_llama_cpp_parsing ();
     test_monitor_format_usage ();
     Printf.printf "All tests passed.\n"
   )

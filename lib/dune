@@ -19,6 +19,7 @@
   Parser
   Memory
   Tool
+  Ui
   Chain
   Session
   Agent

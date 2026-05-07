@@ -4,24 +4,19 @@ open OrchCaml.Types
 open OrchCaml.Provider
 
 type config = {
-  host    : string;
-  port    : int;
-  model   : string;
-  options : gen_options;
-  timeout : float;
+  base_url : string;
+  model    : string;
+  options  : gen_options;
+  timeout  : float;
 }
 
 let make_config
-    ?(host    = "127.0.0.1")
-    ?(port    = 11434)
-    ?(options = default_options)
-    ?(timeout = 120.)
+    ?(base_url = "http://127.0.0.1:11434")
+    ?(options  = default_options)
+    ?(timeout  = 120.)
     ~model
     () =
-  { host; port; model; options; timeout }
-
-let base_url cfg =
-  Printf.sprintf "http://%s:%d" cfg.host cfg.port
+  { base_url; model; options; timeout }
 
 let options_to_json (o : gen_options) =
   let opt key f = function None -> [] | Some v -> [(key, f v)] in
@@ -131,7 +126,7 @@ module Ollama = struct
   let name = "ollama"
 
   let complete net cfg ?tools msgs =
-    let url  = Uri.of_string (base_url cfg ^ "/api/chat") in
+    let url  = Uri.of_string (cfg.base_url ^ "/api/chat") in
     let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:false) in
     let headers  = Http.Header.of_list [
       ("Content-Type", "application/json");
@@ -151,7 +146,7 @@ module Ollama = struct
       failwith (Printf.sprintf "Ollama error %d: %s" status resp_body)
 
   let stream net cfg ?tools msgs ~on_token =
-    let url      = Uri.of_string (base_url cfg ^ "/api/chat") in
+    let url      = Uri.of_string (cfg.base_url ^ "/api/chat") in
     let body_str = Yojson.Safe.to_string (make_body cfg ?tools msgs ~stream:true) in
     let headers  = Http.Header.of_list [("Content-Type", "application/json")] in
     let buf      = Buffer.create 4096 in
@@ -214,7 +209,7 @@ module Ollama = struct
         (OrchCaml.Types.assistant_msg full)
 
   let list_models net cfg =
-    let url    = Uri.of_string (base_url cfg ^ "/api/tags") in
+    let url    = Uri.of_string (cfg.base_url ^ "/api/tags") in
     let client = Cohttp_eio.Client.make ~https:None net in
     (try
       Eio.Switch.run @@ fun sw ->
@@ -234,9 +229,9 @@ module Ollama = struct
 
 end
 
-let make_provider ?(host="127.0.0.1") ?(port=11434)
+let make_provider ?(base_url = "http://127.0.0.1:11434")
     ?(options=OrchCaml.Types.default_options) ?(timeout=120.) ~model () =
-  let cfg = make_config ~host ~port ~options ~timeout ~model () in
+  let cfg = make_config ~base_url ~options ~timeout ~model () in
   Provider ((module Ollama), cfg)
 
 let provider : (module PROVIDER with type config = config) = (module Ollama)

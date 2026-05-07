@@ -11,7 +11,7 @@ Inspired by LangChain but designed for the OCaml ecosystem, OrchCaml models LLM 
 - **Algebraic Effects**: Uses OCaml 5 effects for clean, decoupled tool execution and provider interactions.
 - **Autonomous Agents**: Support for ReAct-style agentic loops that can use tools to solve complex tasks.
 - **Extensible Tools**: Define tools with simple JSON schemas and type-safe execution.
-- **Pluggable Providers**: Support for **Ollama** (local) and **OpenAI-compatible** APIs (Groq, Together, etc.).
+- **Pluggable Providers**: Support for **Ollama** (local), **OpenAI-compatible** APIs (Groq, Together, etc.), and **llama.cpp**.
 - **Typed Parsers**: Transform raw LLM strings into structured OCaml data (JSON, lists, booleans, code blocks) with built-in validation.
 - **Prompt Templates**: Logic-less mustache-style templates (`{{variable}}`) with variable extraction and validation.
 - **Conversation Memory**: Built-in sliding window and buffer memory for stateful interactions.

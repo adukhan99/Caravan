@@ -3,17 +3,7 @@
 open OrchCaml
 open OrchCaml.Types
 open OrchCaml.Config
-
-let ansi code s = Printf.sprintf "\027[%sm%s\027[0m" code s
-let bold s    = ansi "1" s
-let dim s     = ansi "2" s
-let cyan s    = ansi "1;36" s
-let green s   = ansi "1;32" s
-let yellow s  = ansi "1;33" s
-let magenta s = ansi "1;35" s
-let red s     = ansi "1;31" s
-let white s   = ansi "0;97" s
-let blue s    = ansi "0;34" s
+open Ui
 
 let is_tty = Unix.isatty Unix.stdout
 
@@ -88,30 +78,34 @@ let print_help () =
   ) cmds;
   print_newline ()
 
-let make_ollama_provider model =
-  OrchCamlProviders.Ollama.make_provider ~model ()
+let make_ollama_provider ?base_url model =
+  OrchCamlProviders.Ollama.make_provider ?base_url ~model ()
 
 let make_openai_provider ?base_url model =
   OrchCamlProviders.Openai.make_provider ?base_url ~model ()
+
+let make_llama_cpp_provider ?base_url model =
+  OrchCamlProviders.Llama_cpp.make_provider ?base_url ~model ()
 
 type repl_state = {
   mutable session  : Session.t;
   mutable provider_name : string;
   mutable model    : string;
   mutable provider : Provider.packed_provider;
-  mutable use_openai : bool;
-  mutable openai_base : string;
+  mutable base_url : string;
 }
 
 let all_tools : OrchCaml.Tool.packed_tool list = OrchCamlTools.All_tools.all_tools
 
+let make_any_provider provider_name model base_url =
+  match provider_name with
+  | "openai"    -> make_openai_provider ~base_url model
+  | "llama_cpp" -> make_llama_cpp_provider ~base_url model
+  | "ollama"    -> make_ollama_provider ~base_url model
+  | _           -> make_ollama_provider ~base_url model
+
 let rebuild_session st =
-  let provider =
-    if st.use_openai then
-      make_openai_provider ~base_url:st.openai_base st.model
-    else
-      make_ollama_provider st.model
-  in
+  let provider = make_any_provider st.provider_name st.model st.base_url in
   st.provider <- provider;
   st.session  <- Session.create ~tools:all_tools st.model provider
 
@@ -311,11 +305,8 @@ let repl net st =
   in
   loop ()
 
-let cmd_complete net ~model ~use_openai ~openai_base ~system prompt_text =
-  let provider =
-    if use_openai then make_openai_provider ~base_url:openai_base model
-    else make_ollama_provider model
-  in
+let cmd_complete net ~model ~provider_name ~base_url ~system prompt_text =
+  let provider = make_any_provider provider_name model base_url in
   let sess = Session.create ~tools:all_tools model provider in
   let sess = match system with Some s -> Session.set_system sess s | None -> sess in
   (try
@@ -325,11 +316,8 @@ let cmd_complete net ~model ~use_openai ~openai_base ~system prompt_text =
   with exn ->
     Printf.eprintf "[OrchCaml] Error: %s\n%!" (Printexc.to_string exn))
 
-let cmd_models net ~use_openai ~openai_base ~model () =
-  let provider =
-    if use_openai then make_openai_provider ~base_url:openai_base model
-    else make_ollama_provider model
-  in
+let cmd_models net ~provider_name ~base_url ~model () =
+  let provider = make_any_provider provider_name model base_url in
   (try
     let models = Provider.list_models_packed net provider in
     List.iter (fun m ->
@@ -351,12 +339,12 @@ let model_arg =
   Arg.(value & opt string default & info ["m"; "model"] ~docv:"MODEL" ~doc)
 
 let provider_arg =
-  let doc = "Provider to use: 'ollama' or 'openai'." in
+  let doc = "Provider to use: 'ollama', 'openai', or 'llama_cpp'." in
   let default = match get_string "provider" with Some v -> v | None -> "ollama" in
   Arg.(value & opt string default & info ["p"; "provider"] ~docv:"PROVIDER" ~doc)
 
-let openai_base_arg =
-  let doc = "Base URL for OpenAI-compatible API." in
+let base_url_arg =
+  let doc = "Base URL for the provider API (OpenAI, llama.cpp, Ollama, etc.)." in
   let default = match get_string "base_url" with Some v -> v | None -> "https://api.openai.com/v1" in
   Arg.(value & opt string default
        & info ["base-url"] ~docv:"URL" ~doc)
@@ -366,15 +354,10 @@ let system_arg =
   let default = get_string "system" in
   Arg.(value & opt (some string) default & info ["s"; "system"] ~docv:"PROMPT" ~doc)
 
-let run_repl model provider_str openai_base system =
-  let use_openai = provider_str = "openai" in
-  let provider_name = provider_str in
+let run_repl model provider_name base_url system =
   Eio_main.run (fun env ->
     let net = env#net in
-    let provider =
-      if use_openai then make_openai_provider ~base_url:openai_base model
-      else make_ollama_provider model
-    in
+    let provider = make_any_provider provider_name model base_url in
     let sess = Session.create ~tools:all_tools model provider in
     let sess = match system with Some s -> Session.set_system sess s | None -> sess in
     let st = {
@@ -382,8 +365,7 @@ let run_repl model provider_str openai_base system =
       provider_name;
       model;
       provider;
-      use_openai;
-      openai_base;
+      base_url;
     } in
     print_banner ();
     if is_tty then begin
@@ -403,33 +385,33 @@ let run_repl model provider_str openai_base system =
 let repl_cmd =
   let doc = "Start an interactive chat session (default command)." in
   let info = Cmd.info "repl" ~doc in
-  Cmd.v info Term.(const run_repl $ model_arg $ provider_arg $ openai_base_arg $ system_arg)
+  Cmd.v info Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg)
 
 let complete_cmd =
   let prompt_arg =
     let doc = "The prompt text to send." in
     Arg.(required & pos 0 (some string) None & info [] ~docv:"PROMPT" ~doc)
   in
-  let run model provider_str openai_base system prompt =
-    let use_openai = provider_str = "openai" in
+  let run model provider_name base_url system prompt =
     Eio_main.run (fun env ->
-      cmd_complete env#net ~model ~use_openai ~openai_base ~system prompt
+      cmd_complete env#net ~model ~provider_name ~base_url ~system prompt
     )
   in
   let doc = "Send a single prompt and print the response." in
   let info = Cmd.info "complete" ~doc in
-  Cmd.v info Term.(const run $ model_arg $ provider_arg $ openai_base_arg $ system_arg $ prompt_arg)
+  Cmd.v info Term.(const run $ model_arg $ provider_arg $ base_url_arg $ system_arg $ prompt_arg)
 
 let models_cmd =
-  let run model provider_str openai_base =
-    let use_openai = provider_str = "openai" in
+  let run model provider_name base_url =
     Eio_main.run (fun env ->
-      cmd_models env#net ~use_openai ~openai_base ~model ()
+      cmd_models env#net ~provider_name ~base_url ~model ()
     )
   in
   let doc = "List available models for the chosen provider." in
   let info = Cmd.info "models" ~doc in
-  Cmd.v info Term.(const run $ model_arg $ provider_arg $ openai_base_arg)
+  Cmd.v info Term.(const run $ model_arg $ provider_arg $ base_url_arg)
+
+
 
 let () =
   let doc = "Typed LLM orchestration framework and interactive REPL." in
@@ -437,7 +419,7 @@ let () =
     ~doc
     ~version:"0.1.0"
   in
-  let default_cmd = Term.(const run_repl $ model_arg $ provider_arg $ openai_base_arg $ system_arg)
+  let default_cmd = Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg)
   in
   let cmd = Cmd.group ~default:default_cmd info
     [ repl_cmd; complete_cmd; models_cmd ]

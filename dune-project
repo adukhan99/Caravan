@@ -17,7 +17,7 @@
  (name OrchCaml)
  (synopsis "A typed LLM orchestration framework for OCaml")
  (description
-  "OrchCaml provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible), output parsers, prompt templates, conversation memory, and an interactive TUI.")
+  "OrchCaml provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible, llama.cpp), output parsers, prompt templates, conversation memory, and an interactive TUI.")
  (depends
   ocaml
   (dune
@@ -45,4 +45,4 @@
   (eio-ssl
    (>= 0.3)))
  (tags
-  ("llm" "orchestration" "ai" "langchain" "ollama" "openai")))
+  ("llm" "orchestration" "ai" "ollama" "openai" "llama.cpp")))

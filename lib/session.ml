@@ -63,12 +63,12 @@ let execute_tool_calls _net sess tcs =
     match List.find_opt (fun t -> Tool.name_of_packed t = tc.name) sess.tools with
     | None ->
       let msg = Printf.sprintf "Tool '%s' not found in registered tools." tc.name in
-      Printf.eprintf "[Tool]: %s → NOT FOUND\n%!" tc.name;
+      Printf.eprintf "%s: %s → %s\n%!" (Ui.magenta "[Tool]") tc.name (Ui.red "NOT FOUND");
       tool_msg tc.id msg
     | Some packed ->
-      Printf.eprintf "[Tool]: %s(%s)\n%!" tc.name tc.args;
+      Printf.eprintf "%s: %s(%s)\n%!" (Ui.magenta "[Tool]") (Ui.bold tc.name) (Ui.dim tc.args);
       let output_str = Tool.dispatch packed tc.args in
-      Printf.eprintf "[Tool Result]: %s\n%!" output_str;
+      Printf.eprintf "%s: %s\n%!" (Ui.dim "[Tool Result]") (Ui.dim output_str);
       tool_msg tc.id output_str
   ) tcs
 

@@ -142,6 +142,19 @@ let test_usage_llama_cpp_parsing () =
      assert (u.Types.total_tokens = 10)
    | None -> failwith "usage field was None")
 
+let test_tool_finish () =
+  let tool = Tool.Tool (module OrchCamlTools.Finish.Finish) in
+  
+  let json_args = {|{"summary": "all done"}|} in
+  let res = Tool.dispatch tool json_args in
+  if res <> "Task finished: all done" then
+    failwith ("Tool finish failed with summary, got: " ^ res);
+    
+  let json_args_no_sum = "{}" in
+  let res_no_sum = Tool.dispatch tool json_args_no_sum in
+  if res_no_sum <> "Task finished: Completed" then
+    failwith ("Tool finish failed without summary, got: " ^ res_no_sum)
+
 let run_tests () =
   Printf.printf "Running tests...\n";
   Eio_main.run (fun env ->
@@ -153,6 +166,7 @@ let run_tests () =
     test_tool_touch ();
     test_tool_mkdir ();
     test_tool_ls ();
+    test_tool_finish ();
     test_usage_openai_parsing ();
     test_usage_llama_cpp_parsing ();
     test_monitor_format_usage ();

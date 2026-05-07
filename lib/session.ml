@@ -85,7 +85,11 @@ let run_turn_step net sess (reply : chat_message) =
     let memory_with_tools =
       List.fold_left Memory.Buffer.add new_sess.memory tool_responses
     in
-    Continue { new_sess with memory = memory_with_tools }
+    let has_finish = List.exists (fun tc -> tc.name = "finish") tcs in
+    if has_finish then
+      Done ({ new_sess with memory = memory_with_tools }, reply.content)
+    else
+      Continue { new_sess with memory = memory_with_tools }
   | _ ->
     Done (new_sess, reply.content)
 

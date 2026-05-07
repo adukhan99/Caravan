@@ -8,7 +8,7 @@ module Finish : TOOL = struct
   let description = "Call this tool when you have completed the task or reached a final conclusion. Provide a summary of your work."
 
   type input = {
-    summary : string;
+    summary : string option;
   }
   type output = string
 
@@ -21,17 +21,23 @@ module Finish : TOOL = struct
           ("description", `String "A final summary of the task completion.");
         ]);
       ]);
-      ("required", `List [`String "summary"]);
     ]
 
   let parse_args json =
-    try
-      Ok { summary = json |> member "summary" |> to_string }
-    with Type_error (msg, _) -> Error msg
+    let summary = 
+      match json |> member "summary" with
+      | `Null -> None
+      | `String s -> Some s
+      | _ -> None
+    in
+    Ok { summary }
 
   let format_output summary =
     Printf.sprintf "Task finished: %s" summary
 
   type _ Effect.t += Exec : input -> output Effect.t
-  let execute input = input.summary
+  let execute input = 
+    match input.summary with
+    | Some s -> s
+    | None -> "Completed"
 end

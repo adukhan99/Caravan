@@ -115,7 +115,11 @@ let test_monitor_format_usage () =
   let meta = Types.(wrap_result ~raw_response:"" ~model:"llama3" ~provider:"ollama" ~usage
     (assistant_msg "ok")) in
   let s = Monitor.format_usage meta in
-  assert (s = "Tokens: 5 in, 20 out (10.00 toks/s)")
+  assert (s = "Tokens: 5 in, 20 out (10.00 toks/s)");
+  
+  let meta_with_turn = { meta with turn_count = Some 3 } in
+  let s2 = Monitor.format_usage meta_with_turn in
+  assert (s2 = "Turn 3 | Tokens: 5 in, 20 out (10.00 toks/s)")
 
 let test_usage_llama_cpp_parsing () =
   let fake_body = {|

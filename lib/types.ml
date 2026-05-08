@@ -156,10 +156,11 @@ type 'a result_with_meta = {
   provider     : string;
   finish_reason: string option;
   usage        : usage option;
+  turn_count   : int option;
 }
 
-let wrap_result ~raw_response ~model ~provider ?finish_reason ?usage value =
-  { value; raw_response; model; provider; finish_reason; usage }
+let wrap_result ~raw_response ~model ~provider ?finish_reason ?usage ?turn_count value =
+  { value; raw_response; model; provider; finish_reason; usage; turn_count }
 
 type gen_options = {
   temperature  : float option;

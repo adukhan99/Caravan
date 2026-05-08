@@ -98,7 +98,8 @@ let rec run_conversations net sess =
   let outcome = run_turn_step net sess result.value in
   match outcome with
   | Continue sess' -> run_conversations net sess'
-  | Done (sess', _content) -> (sess', result)
+  | Done (sess', _content) ->
+      (sess', { result with turn_count = Some sess'.turn_idx })
 
 let turn net sess user_input =
   let user = user_msg user_input in
@@ -112,7 +113,8 @@ let rec run_conversations_stream net sess ~on_token =
   let outcome = run_turn_step net sess result_with_meta.value in
   match outcome with
   | Continue sess' -> run_conversations_stream net sess' ~on_token
-  | Done (sess', _content) -> (sess', result_with_meta)
+  | Done (sess', _content) ->
+      (sess', { result_with_meta with turn_count = Some sess'.turn_idx })
 
 let turn_stream net sess user_input ~on_token =
   let user = user_msg user_input in

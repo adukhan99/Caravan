@@ -8,7 +8,7 @@ type agent_config = {
 }
 
 let default_config = {
-  max_turns = 10;
+  max_turns = Config.get_int_opt (Some "MAX_TURNS") "max_turns" |> Option.value ~default:10;
   continue_prompt = "Please continue until you are finished. Use the 'finish' tool to signal completion.";
 }
 

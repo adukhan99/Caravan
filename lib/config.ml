@@ -1,8 +1,22 @@
 (** Centralized TOML configuration reader. *)
 
-let config_path = Filename.concat (Sys.getenv "HOME") ".orchcaml/config.toml"
+let config_path =
+  let home = match Sys.getenv_opt "HOME" with Some h -> h | None -> "." in
+  Filename.concat home ".orchcaml/config.toml"
+
+let ensure_config_exists () =
+  let dir = Filename.dirname config_path in
+  if not (Sys.file_exists dir) then
+    (try Unix.mkdir dir 0o755 with _ -> ());
+  if not (Sys.file_exists config_path) then
+    try
+      let oc = open_out config_path in
+      output_string oc "# OrchCaml Configuration\n";
+      close_out oc
+    with _ -> ()
 
 let load_toml () =
+  ensure_config_exists ();
   if Sys.file_exists config_path then
     try Some (Otoml.Parser.from_file config_path)
     with exn ->

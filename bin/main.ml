@@ -4,15 +4,33 @@ open OrchCaml
 open OrchCaml.Types
 open OrchCaml.Config
 open Ui
+open Cmdliner
+
+(* --- Types --- *)
+
+type repl_state = {
+  mutable session       : Session.t;
+  mutable provider_name : string;
+  mutable model         : string;
+  mutable provider      : Provider.packed_provider;
+  mutable base_url      : string;
+}
+
+(* --- Constants & Environment --- *)
 
 let is_tty = Unix.isatty Unix.stdout
+let all_tools : OrchCaml.Tool.packed_tool list = OrchCamlTools.All_tools.all_tools
 
-let print_ansi s = if is_tty then print_string s else
-  let re = Re.compile (Re.seq [
-    Re.char '\027'; Re.char '[';
-    Re.rep (Re.compl [Re.char 'm']); Re.char 'm'
-  ]) in
-  print_string (Re.replace_string re ~by:"" s)
+(* --- UI & Formatting Utilities --- *)
+
+let print_ansi s =
+  if is_tty then print_string s
+  else
+    let re = Re.compile (Re.seq [
+      Re.char '\027'; Re.char '[';
+      Re.rep (Re.compl [Re.char 'm']); Re.char 'm'
+    ]) in
+    print_string (Re.replace_string re ~by:"" s)
 
 let println_ansi s = print_ansi s; print_char '\n'
 
@@ -23,6 +41,33 @@ let print_banner () =
     println_ansi (cyan "╚═════════════════════════════════════════════════╝");
     print_newline ()
   end
+
+let print_help () =
+  println_ansi (bold (yellow " Slash Commands:"));
+  let cmds = [
+    "/model <name>",    "Switch the model";
+    "/system <text>",   "Set the system prompt";
+    "/agent <task>",    "Start an autonomous agentic loop";
+    "/nosystem",        "Clear the system prompt";
+    "/memory <n>",      "Set context window (0 = max)";
+    "/clear",           "Clear conversation history";
+    "/history",         "Print conversation history";
+    "/export [file]",   "Export session JSON to stdout or file";
+    "/models",          "List available models";
+    "/tools",           "List available tools";
+    "/provider",        "Show current provider info";
+    "/temp <0.0-2.0>",  "Set temperature";
+    "/help",            "Show this help";
+    "/quit  or  /exit", "Exit OrchCaml";
+  ] in
+  List.iter (fun (cmd, desc) ->
+    println_ansi (Printf.sprintf "  %s  %s"
+      (cyan (Printf.sprintf "%-22s" cmd))
+      (dim desc))
+  ) cmds;
+  print_newline ()
+
+(* --- Tool & Provider Management --- *)
 
 let get_available_tools () =
   let tools_dir = "lib/tools" in
@@ -53,56 +98,14 @@ let get_available_tools () =
     ) ml_files
   else []
 
-let print_help () =
-  println_ansi (bold (yellow " Slash Commands:"));
-  let cmds = [
-    "/model <name>",    "Switch the model";
-    "/system <text>",   "Set the system prompt";
-    "/agent <task>",    "Start an autonomous agentic loop";
-    "/nosystem",        "Clear the system prompt";
-    "/memory <n>",      "Set context window (0 = max)";
-    "/clear",           "Clear conversation history";
-    "/history",         "Print conversation history";
-    "/export [file]",   "Export session JSON to stdout or file";
-    "/models",          "List available models";
-    "/tools",           "List available tools";
-    "/provider",        "Show current provider info";
-    "/temp <0.0-2.0>",  "Set temperature";
-    "/help",            "Show this help";
-    "/quit  or  /exit", "Exit OrchCaml";
+let make_any_provider name model base_url =
+  let factories = [
+    ("openai",    fun ~base_url ~model -> OrchCamlProviders.Openai.make_provider ~base_url ~model ());
+    ("llama_cpp", fun ~base_url ~model -> OrchCamlProviders.Llama_cpp.make_provider ~base_url ~model ());
+    ("ollama",    fun ~base_url ~model -> OrchCamlProviders.Ollama.make_provider ~base_url ~model ());
   ] in
-  List.iter (fun (cmd, desc) ->
-    println_ansi (Printf.sprintf "  %s  %s"
-      (cyan (Printf.sprintf "%-22s" cmd))
-      (dim desc))
-  ) cmds;
-  print_newline ()
-
-let make_ollama_provider ?base_url model =
-  OrchCamlProviders.Ollama.make_provider ?base_url ~model ()
-
-let make_openai_provider ?base_url model =
-  OrchCamlProviders.Openai.make_provider ?base_url ~model ()
-
-let make_llama_cpp_provider ?base_url model =
-  OrchCamlProviders.Llama_cpp.make_provider ?base_url ~model ()
-
-type repl_state = {
-  mutable session  : Session.t;
-  mutable provider_name : string;
-  mutable model    : string;
-  mutable provider : Provider.packed_provider;
-  mutable base_url : string;
-}
-
-let all_tools : OrchCaml.Tool.packed_tool list = OrchCamlTools.All_tools.all_tools
-
-let make_any_provider provider_name model base_url =
-  match provider_name with
-  | "openai"    -> make_openai_provider ~base_url model
-  | "llama_cpp" -> make_llama_cpp_provider ~base_url model
-  | "ollama"    -> make_ollama_provider ~base_url model
-  | _           -> make_ollama_provider ~base_url model
+  let maker = List.assoc_opt name factories |> Option.value ~default:(List.assoc "ollama" factories) in
+  maker ~base_url ~model
 
 let rebuild_session st =
   let provider = make_any_provider st.provider_name st.model st.base_url in
@@ -112,6 +115,8 @@ let rebuild_session st =
 let on_token token =
   print_ansi (green token);
   flush stdout
+
+(* --- Slash Command Handling --- *)
 
 let handle_slash_command net st line =
   let parts = String.split_on_char ' ' (String.trim line) in
@@ -233,7 +238,7 @@ let handle_slash_command net st line =
     else begin
       println_ansi (bold (yellow "  Available Tools:"));
       List.iter (fun (name, desc) ->
-        println_ansi (Printf.sprintf "  %s  %s" 
+        println_ansi (Printf.sprintf "  %s  %s"
           (cyan (Printf.sprintf "%-15s" name))
           (dim desc))
       ) tools
@@ -257,6 +262,8 @@ let handle_slash_command net st line =
     println_ansi (red (Printf.sprintf "  Unknown command: %s  (try /help)" cmd))
 
   | [] -> ()
+
+(* --- REPL Loop --- *)
 
 let repl net st =
   let prompt () =
@@ -305,6 +312,8 @@ let repl net st =
   in
   loop ()
 
+(* --- CLI Mode Implementations --- *)
+
 let cmd_complete net ~model ~provider_name ~base_url ~system prompt_text =
   let provider = make_any_provider provider_name model base_url in
   let sess = Session.create ~tools:all_tools model provider in
@@ -331,7 +340,7 @@ let cmd_models net ~provider_name ~base_url ~model () =
     Printf.eprintf "[OrchCaml] Error: %s\n%!" msg;
     exit 1)
 
-open Cmdliner
+(* --- CLI Configuration (Cmdliner) --- *)
 
 let model_arg =
   let doc = "Model name to use." in
@@ -411,7 +420,7 @@ let models_cmd =
   let info = Cmd.info "models" ~doc in
   Cmd.v info Term.(const run $ model_arg $ provider_arg $ base_url_arg)
 
-
+(* --- Entry Point --- *)
 
 let () =
   let doc = "Typed LLM orchestration framework and interactive REPL." in

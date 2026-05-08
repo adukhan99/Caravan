@@ -20,17 +20,15 @@ let is_finished sess =
     | None -> false
   ) history
 
-let run ?(config = default_config) net sess task =
+let run_generic ?(config = default_config) run_fn sess task =
   let rec loop sess turn_count =
     if turn_count >= config.max_turns then
       Error "Maximum turns reached without completion."
     else
-      let (sess', result) = Session.run_conversations net sess in
+      let (sess', result) = run_fn sess in
       if is_finished sess' then
         Ok (sess', result)
       else
-        (* If it didn't call finish and didn't call other tools (which would have kept it in run_conversations),
-           it might just be talking. We nudge it to continue if it's not finished. *)
         let user_nudge = user_msg config.continue_prompt in
         let sess'' = { sess' with Session.memory = Memory.Buffer.add sess'.Session.memory user_nudge } in
         loop sess'' (turn_count + 1)
@@ -38,18 +36,8 @@ let run ?(config = default_config) net sess task =
   let sess_with_task = { sess with Session.memory = Memory.Buffer.add sess.Session.memory (user_msg task) } in
   loop sess_with_task 0
 
+let run ?(config = default_config) net sess task =
+  run_generic ~config (Session.run_conversations net) sess task
+
 let run_stream ?(config = default_config) net sess task ~on_token =
-  let rec loop sess turn_count =
-    if turn_count >= config.max_turns then
-      Error "Maximum turns reached without completion."
-    else
-      let (sess', result) = Session.run_conversations_stream net sess ~on_token in
-      if is_finished sess' then
-        Ok (sess', result)
-      else
-        let user_nudge = user_msg config.continue_prompt in
-        let sess'' = { sess' with Session.memory = Memory.Buffer.add sess'.Session.memory user_nudge } in
-        loop sess'' (turn_count + 1)
-  in
-  let sess_with_task = { sess with Session.memory = Memory.Buffer.add sess.Session.memory (user_msg task) } in
-  loop sess_with_task 0
+  run_generic ~config (Session.run_conversations_stream net ~on_token) sess task

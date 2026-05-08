@@ -76,13 +76,16 @@ let chat_template ?system human = {
 let render_chat ~vars tmpl =
   let open Types in
   render ~vars tmpl.human_tmpl >>= fun human_content ->
-  let human_msg = user_msg human_content in
-  match tmpl.system_tmpl with
-  | None     -> Ok [ human_msg ]
-  | Some sys ->
-    let sys_vars = List.filter (fun (k, _) -> List.mem k sys.variables) vars in
-    render ~vars:sys_vars sys >|= fun sys_str ->
-    [ system_msg sys_str; human_msg ]
+  (match tmpl.system_tmpl with
+   | None -> Ok None
+   | Some sys ->
+     let sys_vars = List.filter (fun (k, _) -> List.mem k sys.variables) vars in
+     render ~vars:sys_vars sys >|= Option.some)
+  >|= fun sys_opt ->
+  Prompt.(exec (
+    let* () = optional sys_opt system in
+    user human_content
+  ))
 
 let render_chat_exn ~vars tmpl =
   match render_chat ~vars tmpl with

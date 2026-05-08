@@ -2,14 +2,13 @@ open OrchCaml
 
 let test_memory_buffer () =
   let mem = Memory.Buffer.create ~window:2 () in
-  let s1 = Types.system_msg "You are an assistant." in
-  let m1 = Types.user_msg "Hello!" in
-  let m2 = Types.assistant_msg "Hi!" in
-  let m3 = Types.user_msg "Next" in
-  let mem = Memory.Buffer.add mem s1 in
-  let mem = Memory.Buffer.add mem m1 in
-  let mem = Memory.Buffer.add mem m2 in
-  let mem = Memory.Buffer.add mem m3 in
+  let msgs = Prompt.(exec (
+    let* () = system "You are an assistant." in
+    let* () = user "Hello!" in
+    let* () = assistant "Hi!" in
+    user "Next"
+  )) in
+  let mem = List.fold_left Memory.Buffer.add mem msgs in
   
   let hist = Memory.Buffer.get mem in
   assert (List.length hist = 3);

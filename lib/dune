@@ -13,14 +13,14 @@
  (modules
   Config
   Types
+  Memory
+  Parser
+  Ui
   Monitor
   Provider
-  Template
-  Parser
-  Memory
   Tool
-  Ui
-  Chain
   Session
+  Prompt
+  Template
   Agent
-  Prompt))
+  Chain))

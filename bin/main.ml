@@ -18,54 +18,24 @@ type repl_state = {
 
 (* --- Constants & Environment --- *)
 
-let is_tty = Unix.isatty Unix.stdout
 let all_tools : OrchCaml.Tool.packed_tool list = OrchCamlTools.All_tools.all_tools
 
-(* --- UI & Formatting Utilities --- *)
-
-let print_ansi s =
-  if is_tty then print_string s
-  else
-    let re = Re.compile (Re.seq [
-      Re.char '\027'; Re.char '[';
-      Re.rep (Re.compl [Re.char 'm']); Re.char 'm'
-    ]) in
-    print_string (Re.replace_string re ~by:"" s)
-
-let println_ansi s = print_ansi s; print_char '\n'
-
-let print_banner () =
-  if is_tty then begin
-    println_ansi (cyan "╔═════════════════════════════════════════════════╗");
-    println_ansi (cyan "║  " ^ bold (white "OrchCaml") ^ white "  v0.1  —  Typed LLM Orchestration     " ^ cyan "║");
-    println_ansi (cyan "╚═════════════════════════════════════════════════╝");
-    print_newline ()
-  end
-
-let print_help () =
-  println_ansi (bold (yellow " Slash Commands:"));
-  let cmds = [
-    "/model <name>",    "Switch the model";
-    "/system <text>",   "Set the system prompt";
-    "/agent <task>",    "Start an autonomous agentic loop";
-    "/nosystem",        "Clear the system prompt";
-    "/memory <n>",      "Set context window (0 = max)";
-    "/clear",           "Clear conversation history";
-    "/history",         "Print conversation history";
-    "/export [file]",   "Export session JSON to stdout or file";
-    "/models",          "List available models";
-    "/tools",           "List available tools";
-    "/provider",        "Show current provider info";
-    "/temp <0.0-2.0>",  "Set temperature";
-    "/help",            "Show this help";
-    "/quit  or  /exit", "Exit OrchCaml";
-  ] in
-  List.iter (fun (cmd, desc) ->
-    println_ansi (Printf.sprintf "  %s  %s"
-      (cyan (Printf.sprintf "%-22s" cmd))
-      (dim desc))
-  ) cmds;
-  print_newline ()
+let slash_commands = [
+  "/model <name>",    "Switch the model";
+  "/system <text>",   "Set the system prompt";
+  "/agent <task>",    "Start an autonomous agentic loop";
+  "/nosystem",        "Clear the system prompt";
+  "/memory <n>",      "Set context window (0 = max)";
+  "/clear",           "Clear conversation history";
+  "/history",         "Print conversation history";
+  "/export [file]",   "Export session JSON to stdout or file";
+  "/models",          "List available models";
+  "/tools",           "List available tools";
+  "/provider",        "Show current provider info";
+  "/temp <0.0-2.0>",  "Set temperature";
+  "/help",            "Show this help";
+  "/quit  or  /exit", "Exit OrchCaml";
+]
 
 (* --- Tool & Provider Management --- *)
 
@@ -126,7 +96,7 @@ let handle_slash_command net st line =
     exit 0
 
   | ["/help"] | ["/?"] ->
-    print_help ()
+    print_help slash_commands
 
   | "/agent" :: rest ->
     let task = String.concat " " rest |> String.trim in

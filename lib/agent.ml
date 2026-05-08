@@ -29,11 +29,10 @@ let run_generic ?(config = default_config) run_fn sess task =
       if is_finished sess' then
         Ok (sess', result)
       else
-        let user_nudge = user_msg config.continue_prompt in
-        let sess'' = { sess' with Session.memory = Memory.Buffer.add sess'.Session.memory user_nudge } in
+        let sess'' = Prompt.(exec_in_session (user config.continue_prompt) sess') in
         loop sess'' (turn_count + 1)
   in
-  let sess_with_task = { sess with Session.memory = Memory.Buffer.add sess.Session.memory (user_msg task) } in
+  let sess_with_task = Prompt.(exec_in_session (user task) sess) in
   loop sess_with_task 0
 
 let run ?(config = default_config) net sess task =

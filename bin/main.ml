@@ -13,7 +13,7 @@ type repl_state = {
   mutable provider_name : string;
   mutable model         : string;
   mutable provider      : Provider.packed_provider;
-  mutable base_url      : string;
+  mutable base_url      : string option;
 }
 
 (* --- Constants & Environment --- *)
@@ -70,9 +70,9 @@ let get_available_tools () =
 
 let make_any_provider name model base_url =
   let factories = [
-    ("openai",    fun ~base_url ~model -> OrchCamlProviders.Openai.make_provider ~base_url ~model ());
-    ("llama_cpp", fun ~base_url ~model -> OrchCamlProviders.Llama_cpp.make_provider ~base_url ~model ());
-    ("ollama",    fun ~base_url ~model -> OrchCamlProviders.Ollama.make_provider ~base_url ~model ());
+    ("openai",    fun ~base_url ~model -> OrchCamlProviders.Openai.make_provider ?base_url ~model ());
+    ("llama_cpp", fun ~base_url ~model -> OrchCamlProviders.Llama_cpp.make_provider ?base_url ~model ());
+    ("ollama",    fun ~base_url ~model -> OrchCamlProviders.Ollama.make_provider ?base_url ~model ());
   ] in
   let maker = List.assoc_opt name factories |> Option.value ~default:(List.assoc "ollama" factories) in
   maker ~base_url ~model
@@ -215,9 +215,11 @@ let handle_slash_command net st line =
     end
 
   | ["/provider"] ->
-    println_ansi (Printf.sprintf "  %s  %s  %s"
+    let url_str = match st.base_url with Some u -> u | None -> "(default)" in
+    println_ansi (Printf.sprintf "  %s  %s  %s  %s"
       (bold (blue "Provider:")) (white st.provider_name)
-      (dim ("model=" ^ st.model)))
+      (dim ("model=" ^ st.model))
+      (dim ("url=" ^ url_str)))
 
   | "/temp" :: [v_str] ->
     (match float_of_string_opt v_str with
@@ -324,8 +326,8 @@ let provider_arg =
 
 let base_url_arg =
   let doc = "Base URL for the provider API (OpenAI, llama.cpp, Ollama, etc.)." in
-  let default = match get_string "base_url" with Some v -> v | None -> "https://api.openai.com/v1" in
-  Arg.(value & opt string default
+  let default = get_string "base_url" in
+  Arg.(value & opt (some string) default
        & info ["base-url"] ~docv:"URL" ~doc)
 
 let system_arg =

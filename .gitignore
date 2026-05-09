@@ -34,3 +34,6 @@ setup.log
 
 # Local OPAM switch
 _opam/
+
+# Arbitrary command execution is not yet safe
+lib/tools/bash.ml

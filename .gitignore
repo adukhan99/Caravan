@@ -35,5 +35,8 @@ setup.log
 # Local OPAM switch
 _opam/
 
+# Generated documentation files
+docs/*.rendered*
+
 # Arbitrary command execution is not yet safe
 lib/tools/bash.ml

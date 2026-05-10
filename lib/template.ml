@@ -10,21 +10,24 @@ type t = {
   variables : string list;
 }
 
-let var_re = Re.compile (Re.seq [
-  Re.str "{{";
-  Re.rep1 Re.space |> Re.opt;
-  Re.group (Re.rep1 (Re.alt [Re.alnum; Re.char '_']));
-  Re.rep1 Re.space |> Re.opt;
-  Re.str "}}";
-])
+let var_re = 
+  let open Re in
+  compile (seq [
+    str "{{";
+    rep1 space |> opt;
+    group (rep1 (alt [alnum; char '_']));
+    rep1 space |> opt;
+    str "}}";
+  ])
 
 let of_string source =
   let ast =
-    Re.split_full var_re source
+    let open Re in
+    split_full var_re source
     |> List.map (function
         | `Text t -> Text t
         | `Delim d ->
-          let var_name = Re.Group.get d 1 in
+          let var_name = Group.get d 1 in
           Var var_name
       )
   in

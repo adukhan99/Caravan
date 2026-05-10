@@ -2,6 +2,7 @@
 
 open OrchCaml.Types
 open OrchCaml.Provider
+open OrchCaml.Tool
 
 type config = {
   base_url : string;
@@ -30,7 +31,7 @@ let options_to_json (o : gen_options) =
      else [("stop", `List (List.map (fun s -> `String s) o.stop))]);
   ])
 
-let ollama_tool_call_to_json (tc : OrchCaml.Types.tool_call) =
+let ollama_tool_call_to_json (tc : tool_call) =
   let args_json = try Yojson.Safe.from_string tc.args with _ -> `Assoc [] in
   `Assoc [
     ("type", `String "function");
@@ -40,9 +41,9 @@ let ollama_tool_call_to_json (tc : OrchCaml.Types.tool_call) =
     ]);
   ]
 
-let ollama_chat_message_to_json (msg : OrchCaml.Types.chat_message) =
+let ollama_chat_message_to_json (msg : chat_message) =
   let base = [
-    ("role",      `String (match msg.role with Tool _ -> "tool" | r -> OrchCaml.Types.role_to_string r));
+    ("role",      `String (match msg.role with Tool _ -> "tool" | r -> role_to_string r));
     ("content",   if msg.content = "" && msg.tool_calls <> None then `Null else `String msg.content);
   ] in
   let base = match msg.tool_calls with
@@ -72,9 +73,9 @@ let make_body cfg ?tools msgs ~stream =
         `Assoc [
           ("type", `String "function");
           ("function", `Assoc [
-            ("name", `String (OrchCaml.Tool.name_of_packed t));
-            ("description", `String (OrchCaml.Tool.description_of_packed t));
-            ("parameters", OrchCaml.Tool.schema_of_packed t);
+            ("name", `String (name_of_packed t));
+            ("description", `String (description_of_packed t));
+            ("parameters", schema_of_packed t);
           ])
         ]) ts)
       in
@@ -95,7 +96,7 @@ let parse_usage json =
       | `Float ns -> Some (ns /. 1e9)
       | _         -> None
     in
-    Some OrchCaml.Types.{ prompt_tokens; completion_tokens; total_tokens; total_duration }
+    Some { prompt_tokens; completion_tokens; total_tokens; total_duration }
   | _ -> None
 
 let parse_complete_response body_str model =
@@ -112,12 +113,12 @@ let parse_complete_response body_str model =
         let func = tc |> member "function" in
         let name = func |> member "name" |> to_string in
         let args = func |> member "arguments" |> Yojson.Safe.to_string in
-        { OrchCaml.Types.id = "call_" ^ name; name; args }
+        { id = "call_" ^ name; name; args }
       ) l)
     | _ -> None
   in
   let usage = parse_usage json in
-  let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
+  let reply_msg = make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"ollama" ?finish_reason:finish ?usage reply_msg
 
 module Ollama = struct
@@ -187,11 +188,11 @@ module Ollama = struct
                     let func = tc |> member "function" in
                     let name = func |> member "name" |> to_string in
                     let args = func |> member "arguments" |> Yojson.Safe.to_string in
-                    OrchCaml.Types.{ id = "call_" ^ name; name; args }
+                    { id = "call_" ^ name; name; args }
                   ) l)
                 | _ -> None
               in
-              let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+              let reply = make_message ?tool_calls Assistant full in
               result := Some (wrap_result ~raw_response:full ~model:cfg.model
                 ~provider:"ollama" ?finish_reason:finish ?usage reply)
             end
@@ -206,7 +207,7 @@ module Ollama = struct
     | None ->
       let full = Buffer.contents buf in
       wrap_result ~raw_response:full ~model:cfg.model ~provider:"ollama"
-        (OrchCaml.Types.assistant_msg full)
+        (assistant_msg full)
 
   let list_models net cfg =
     let url    = Uri.of_string (cfg.base_url ^ "/api/tags") in
@@ -230,7 +231,7 @@ module Ollama = struct
 end
 
 let make_provider ?(base_url = "http://127.0.0.1:11434")
-    ?(options=OrchCaml.Types.default_options) ?(timeout=120.) ~model () =
+    ?(options=default_options) ?(timeout=120.) ~model () =
   let cfg = make_config ~base_url ~options ~timeout ~model () in
   Provider ((module Ollama), cfg)
 

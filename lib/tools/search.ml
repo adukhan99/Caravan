@@ -1,6 +1,7 @@
-open OrchCaml
+open OrchCaml.Tool
+open OrchCaml.Config
 
-module Search : Tool.TOOL = struct
+module Search : TOOL = struct
 
   type input = { query : string; num_results : int }
 
@@ -59,7 +60,7 @@ module Search : Tool.TOOL = struct
   let get_api_key () =
     match Sys.getenv_opt "SEARCH_API_KEY" with
     | Some k when k <> "" -> Some k
-    | _ -> Config.get_string "search_api_key"
+    | _ -> get_string "search_api_key"
 
   let do_search net { query; num_results } =
     let encoded_query = Uri.pct_encode query in

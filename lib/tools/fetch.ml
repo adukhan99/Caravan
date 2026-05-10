@@ -1,6 +1,6 @@
-open OrchCaml
+open OrchCaml.Tool
 
-module Fetch : Tool.TOOL = struct
+module Fetch : TOOL = struct
 
   type input = { url : string }
   type output = (string, string) result

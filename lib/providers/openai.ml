@@ -3,6 +3,7 @@
 open OrchCaml.Types
 open OrchCaml.Provider
 open OrchCaml.Config
+open OrchCaml.Tool
 
 let load_api_key_from_env () =
   match get_string_opt (Some "OPENAI_API_KEY") "openai_api_key" with
@@ -62,9 +63,9 @@ let make_body cfg ?tools msgs ~stream =
         `Assoc [
           ("type", `String "function");
           ("function", `Assoc [
-            ("name", `String (OrchCaml.Tool.name_of_packed t));
-            ("description", `String (OrchCaml.Tool.description_of_packed t));
-            ("parameters", OrchCaml.Tool.schema_of_packed t);
+            ("name", `String (name_of_packed t));
+            ("description", `String (description_of_packed t));
+            ("parameters", schema_of_packed t);
           ])
         ]) ts)
       in
@@ -89,7 +90,7 @@ let parse_usage json =
     let prompt_tokens     = u |> member "prompt_tokens"     |> to_int in
     let completion_tokens = u |> member "completion_tokens" |> to_int in
     let total_tokens      = u |> member "total_tokens"      |> to_int in
-    Some OrchCaml.Types.{ prompt_tokens; completion_tokens; total_tokens; total_duration = None }
+    Some { prompt_tokens; completion_tokens; total_tokens; total_duration = None }
   | _ -> None
 
 let parse_complete_response body_str model =
@@ -118,7 +119,7 @@ let parse_complete_response body_str model =
     | _ -> None
   in
   let usage = parse_usage json in
-  let reply_msg = OrchCaml.Types.make_message ?tool_calls Assistant content in
+  let reply_msg = make_message ?tool_calls Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:"openai" ?finish_reason:finish ?usage reply_msg
 
 let https uri sock =
@@ -185,11 +186,11 @@ module Openai = struct
                 let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
                 let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
                 Some (List.map (fun (_, (id, name, abuf)) ->
-                  OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
+                  { id; name; args = Buffer.contents abuf }
                 ) sorted)
               end
             in
-            let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+            let reply = make_message ?tool_calls Assistant full in
             result_ref := Some (wrap_result ~raw_response:full ~model:cfg.model
               ~provider:"openai" ?usage:(!usage_ref) reply)
           end else begin
@@ -254,11 +255,11 @@ module Openai = struct
           let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
           let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
           Some (List.map (fun (_, (id, name, abuf)) ->
-            OrchCaml.Types.{ id; name; args = Buffer.contents abuf }
+            { id; name; args = Buffer.contents abuf }
           ) sorted)
         end
       in
-      let reply = OrchCaml.Types.make_message ?tool_calls Assistant full in
+      let reply = make_message ?tool_calls Assistant full in
       wrap_result ~raw_response:full ~model:cfg.model ~provider:"openai"
         ?usage:(!usage_ref) reply
 
@@ -286,7 +287,7 @@ end
 
 let make_provider
     ?(base_url = "https://api.openai.com/v1")
-    ?(options  = OrchCaml.Types.default_options)
+    ?(options  = default_options)
     ?api_key
     ~model
     () =

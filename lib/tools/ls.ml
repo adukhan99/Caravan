@@ -1,6 +1,6 @@
-open OrchCaml
+open OrchCaml.Tool
 
-module Ls : Tool.TOOL with type input = string and type output = string = struct
+module Ls : TOOL with type input = string and type output = string = struct
   let name = "ls"
   let description =
     "Lists files and directories at a given path. \

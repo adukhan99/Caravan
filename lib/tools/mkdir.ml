@@ -1,6 +1,6 @@
-open OrchCaml
+open OrchCaml.Tool
 
-module Mkdir : Tool.TOOL with type input = string and type output = (unit, string) result = struct
+module Mkdir : TOOL with type input = string and type output = (unit, string) result = struct
   let name = "mkdir"
   let description = "Creates a directory including any necessary parent directories."
   type input = string

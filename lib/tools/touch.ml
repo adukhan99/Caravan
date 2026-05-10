@@ -1,6 +1,6 @@
-open OrchCaml
+open OrchCaml.Tool
 
-module Touch : Tool.TOOL with type input = string and type output = (unit, string) result = struct
+module Touch : TOOL with type input = string and type output = (unit, string) result = struct
   let name = "touch"
   let description = "Creates an empty file or updates its modification time."
   type input = string

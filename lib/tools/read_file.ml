@@ -1,6 +1,6 @@
-open OrchCaml
+open OrchCaml.Tool
 
-module Read_file : Tool.TOOL with type input = string and type output = (string, string) result = struct
+module Read_file : TOOL with type input = string and type output = (string, string) result = struct
   let name = "read_file"
   let description = "Reads the entire contents of a file."
   type input = string

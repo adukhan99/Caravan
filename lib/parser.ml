@@ -61,14 +61,16 @@ let list : string list t = fun s ->
 
 let numbered_list : string list t = fun s ->
   let parse_numbered s =
-    let re = Re.compile (Re.seq [
-      Re.bos |> Re.opt;
-      Re.rep Re.space;
-      Re.rep1 Re.digit;
-      Re.alt [Re.char '.'; Re.char ')'];
-      Re.rep1 Re.space;
-      Re.group (Re.rep1 Re.any);
-    ]) in
+    let re = 
+      let open Re in
+      compile (seq [
+        bos |> opt;
+        rep space;
+        rep1 digit;
+        alt [char '.'; char ')'];
+        rep1 space;
+        group (rep1 any);
+      ]) in
     let lines = String.split_on_char '\n' s in
     let items = List.filter_map (fun line ->
       match Re.exec_opt re (String.trim line) with
@@ -88,18 +90,24 @@ let bool : bool t = fun s ->
 
 let int_val : int t = fun s ->
   let s_trim = String.trim s in
-  let re = Re.compile (Re.seq [Re.opt (Re.char '-'); Re.rep1 Re.digit]) in
+  let re = 
+    let open Re in
+    compile (seq [opt (char '-'); rep1 digit]) 
+  in
   match Re.exec_opt re s_trim with
   | None   -> fail ("No integer found in: " ^ s_trim) s
   | Some m -> return (int_of_string (Re.Group.get m 0)) s
 
 let float_val : float t = fun s ->
   let s_trim = String.trim s in
-  let re = Re.compile (Re.seq [
-    Re.opt (Re.char '-');
-    Re.rep1 Re.digit;
-    Re.opt (Re.seq [Re.char '.'; Re.rep1 Re.digit]);
-  ]) in
+  let re = 
+    let open Re in
+    compile (seq [
+      opt (char '-');
+      rep1 digit;
+      opt (seq [char '.'; rep1 digit]);
+    ]) 
+  in
   match Re.exec_opt re s_trim with
   | None   -> fail ("No float found in: " ^ s_trim) s
   | Some m -> return (float_of_string (Re.Group.get m 0)) s
@@ -110,21 +118,27 @@ let extract_code ?lang : string t = fun s ->
     | None   -> Re.rep (Re.compl [Re.char '\n'])
     | Some l -> Re.str l
   in
-  let re = Re.compile (Re.seq [
-    Re.str "```";
-    lang_pat;
-    Re.char '\n';
-    Re.group (Re.rep Re.any);
-    Re.str "```";
-  ]) in
+  let re = 
+    let open Re in
+    compile (seq [
+      str "```";
+      lang_pat;
+      char '\n';
+      group (rep any);
+      str "```";
+    ]) 
+  in
   match Re.exec_opt re s with
   | Some m -> return (String.trim (Re.Group.get m 1)) s
   | None   ->
-    let re2 = Re.compile (Re.seq [
-      Re.char '`';
-      Re.group (Re.rep1 (Re.compl [Re.char '`']));
-      Re.char '`';
-    ]) in
+    let re2 = 
+      let open Re in
+      compile (seq [
+        char '`';
+        group (rep1 (compl [char '`']));
+        char '`';
+      ]) 
+    in
     (match Re.exec_opt re2 s with
      | Some m -> return (Re.Group.get m 1) s
      | None   -> return (String.trim s) s)

@@ -1,4 +1,4 @@
-open OrchCaml
+open OrchCaml.Tool
 
 type sed_input = {
   path : string;
@@ -6,7 +6,7 @@ type sed_input = {
   replacement : string;
 }
 
-module Sed : Tool.TOOL with type input = sed_input and type output = (unit, string) result = struct
+module Sed : TOOL with type input = sed_input and type output = (unit, string) result = struct
   let name = "sed"
   let description = "Basic sed replacement in a file (replaces all occurrences of a regex pattern with a replacement string)."
   type input = sed_input

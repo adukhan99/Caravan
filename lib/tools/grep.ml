@@ -1,11 +1,11 @@
-open OrchCaml
+open OrchCaml.Tool
 
 type grep_input = {
   pattern : string;
   path : string;
 }
 
-module Grep : Tool.TOOL with type input = grep_input and type output = (string, string) result = struct
+module Grep : TOOL with type input = grep_input and type output = (string, string) result = struct
   let name = "grep"
   let description = "Search for a pattern in a file (basic grep)."
   type input = grep_input

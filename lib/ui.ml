@@ -17,10 +17,12 @@ let blue s    = ansi "0;34" s
 let print_ansi s =
   if is_tty then print_string s
   else
-    let re = Re.compile (Re.seq [
-      Re.char '\027'; Re.char '[';
-      Re.rep (Re.compl [Re.char 'm']); Re.char 'm'
-    ]) in
+    let re = 
+      let open Re in
+      compile (seq [
+        char '\027'; char '[';
+        rep (compl [char 'm']); char 'm'
+      ]) in
     print_string (Re.replace_string re ~by:"" s)
 
 let println_ansi s = print_ansi s; print_char '\n'

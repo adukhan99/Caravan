@@ -1,8 +1,8 @@
-open OrchCaml
+open OrchCaml.Tool
 
 type write_input = { path : string; content : string }
 
-module Write_file : Tool.TOOL with type input = write_input and type output = (unit, string) result = struct
+module Write_file : TOOL with type input = write_input and type output = (unit, string) result = struct
   let name = "write_file"
   let description = "Writes content to a file, overwriting if it exists."
   type input = write_input

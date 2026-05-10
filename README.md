@@ -62,7 +62,7 @@ let () = Eio_main.run (fun env ->
 
 ## Quick Start: The TUI
 
-OrchCaml comes with a powerful CLI tool for interactive use.
+OrchCaml comes with a powerful CLI tool for interactive use. It is highly recommended to set up a [configuration file](docs/configuration.md) to manage your provider settings and API keys.
 
 ```bash
 # Start the REPL (uses local Ollama by default)
@@ -86,6 +86,20 @@ Inside the REPL, use these commands to control the session:
 - `/tools`: List available tools for the agent.
 - `/models`: List models available on the current provider.
 - `/export [file.json]`: Export the full conversation history.
+
+## Configuration
+
+OrchCaml can be configured via a TOML file at `~/.orchcaml/config.toml` or via environment variables.
+
+See the [Configuration Guide](docs/configuration.md) for a full list of available options and an [example_config.toml](example_config.toml).
+
+### Quick Setup
+
+```bash
+mkdir -p ~/.orchcaml
+cp example_config.toml ~/.orchcaml/config.toml
+# Edit the file with your API keys and preferred model
+```
 
 ## Architecture
 

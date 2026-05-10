@@ -60,9 +60,9 @@ let list : string list t = fun s ->
       |> List.filter (fun l -> l <> "")) s
 
 let numbered_list : string list t = fun s ->
+  let open Re in
   let parse_numbered s =
     let re = 
-      let open Re in
       compile (seq [
         bos |> opt;
         rep space;
@@ -73,8 +73,8 @@ let numbered_list : string list t = fun s ->
       ]) in
     let lines = String.split_on_char '\n' s in
     let items = List.filter_map (fun line ->
-      match Re.exec_opt re (String.trim line) with
-      | Some m -> Some (String.trim (Re.Group.get m 1))
+      match exec_opt re (String.trim line) with
+      | Some m -> Some (String.trim (Group.get m 1))
       | None   -> None
     ) lines in
     if items = [] then Error "No numbered items found"
@@ -89,37 +89,37 @@ let bool : bool t = fun s ->
   | other -> fail ("Cannot parse bool from: " ^ other) s
 
 let int_val : int t = fun s ->
+  let open Re in
   let s_trim = String.trim s in
   let re = 
-    let open Re in
     compile (seq [opt (char '-'); rep1 digit]) 
   in
-  match Re.exec_opt re s_trim with
+  match exec_opt re s_trim with
   | None   -> fail ("No integer found in: " ^ s_trim) s
-  | Some m -> return (int_of_string (Re.Group.get m 0)) s
+  | Some m -> return (int_of_string (Group.get m 0)) s
 
 let float_val : float t = fun s ->
+  let open Re in
   let s_trim = String.trim s in
   let re = 
-    let open Re in
     compile (seq [
       opt (char '-');
       rep1 digit;
       opt (seq [char '.'; rep1 digit]);
     ]) 
   in
-  match Re.exec_opt re s_trim with
+  match exec_opt re s_trim with
   | None   -> fail ("No float found in: " ^ s_trim) s
-  | Some m -> return (float_of_string (Re.Group.get m 0)) s
+  | Some m -> return (float_of_string (Group.get m 0)) s
 
 (** Strips markdown code fences from the response. *)
 let extract_code ?lang : string t = fun s ->
+  let open Re in
   let lang_pat = match lang with
-    | None   -> Re.rep (Re.compl [Re.char '\n'])
-    | Some l -> Re.str l
+    | None   -> rep (compl [char '\n'])
+    | Some l -> str l
   in
   let re = 
-    let open Re in
     compile (seq [
       str "```";
       lang_pat;
@@ -128,19 +128,18 @@ let extract_code ?lang : string t = fun s ->
       str "```";
     ]) 
   in
-  match Re.exec_opt re s with
-  | Some m -> return (String.trim (Re.Group.get m 1)) s
+  match exec_opt re s with
+  | Some m -> return (String.trim (Group.get m 1)) s
   | None   ->
     let re2 = 
-      let open Re in
       compile (seq [
         char '`';
         group (rep1 (compl [char '`']));
         char '`';
       ]) 
     in
-    (match Re.exec_opt re2 s with
-     | Some m -> return (Re.Group.get m 1) s
+    (match exec_opt re2 s with
+     | Some m -> return (Group.get m 1) s
      | None   -> return (String.trim s) s)
 
 let first_line : string t =
@@ -149,13 +148,14 @@ let first_line : string t =
   | h :: _ -> return h
 
 let regex_capture ~pattern : string t = fun s ->
-  let re = Re.compile (Re.Pcre.re pattern) in
-  match Re.exec_opt re s with
+  let open Re in
+  let re = compile (Pcre.re pattern) in
+  match exec_opt re s with
   | None   -> fail (Printf.sprintf "Pattern /%s/ did not match" pattern) s
   | Some m ->
-    (try return (Re.Group.get m 1) s
+    (try return (Group.get m 1) s
      with Not_found ->
-       try return (Re.Group.get m 0) s
+       try return (Group.get m 0) s
        with Not_found -> fail "No capture group in match" s)
 
 let json_array_strings : string list t =

@@ -44,10 +44,13 @@ let get_available_tools () =
   if Sys.file_exists tools_dir && Sys.is_directory tools_dir then
     let files = Array.to_list (Sys.readdir tools_dir) in
     let ml_files = List.filter (fun f -> Filename.check_suffix f ".ml") files in
-    let desc_re = Re.compile (Re.seq [
-      Re.str "let description"; Re.rep Re.space; Re.char '='; Re.rep Re.space;
-      Re.char '"'; Re.group (Re.rep (Re.compl [Re.char '"'])); Re.char '"'
-    ]) in
+    let desc_re = 
+      let open Re in
+      compile (seq [
+        str "let description"; rep space; char '='; rep space;
+        char '"'; group (rep (compl [char '"'])); char '"'
+      ])
+    in
     List.map (fun f ->
       let path = Filename.concat tools_dir f in
       let name = Filename.chop_suffix f ".ml" in

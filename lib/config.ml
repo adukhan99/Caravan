@@ -11,7 +11,7 @@ let ensure_config_exists () =
   if not (Sys.file_exists config_path) then
     try
       let oc = open_out config_path in
-      output_string oc "# OrchCaml Configuration\n";
+      output_string oc "# OrchCaml Configuration\n\n";
       close_out oc
     with _ -> ()
 
@@ -54,3 +54,25 @@ let get_string_opt env_var toml_key =
                | Some v when v <> "" -> Some v
                | _ -> get_string toml_key)
   | None -> get_string toml_key
+
+let get_bool key =
+  match Lazy.force toml_ast with
+  | None -> None
+  | Some ast ->
+    try Some (Otoml.find ast Otoml.get_boolean [key])
+    with _ -> None
+
+let get_bool_opt env_var toml_key =
+  let of_env_str = function
+    | "true" | "1" | "yes" -> Some true
+    | "false" | "0" | "no" -> Some false
+    | _ -> None
+  in
+  match env_var with
+  | Some e -> (match Sys.getenv_opt e with
+               | Some v when v <> "" ->
+                 (match of_env_str (String.lowercase_ascii v) with
+                  | Some _ as r -> r
+                  | None -> get_bool toml_key)
+               | _ -> get_bool toml_key)
+  | None -> get_bool toml_key

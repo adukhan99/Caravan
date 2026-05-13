@@ -37,6 +37,3 @@ _opam/
 
 # Generated documentation files
 docs/*.rendered*
-
-# Arbitrary command execution is not yet safe
-lib/tools/bash.ml

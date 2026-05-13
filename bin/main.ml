@@ -18,7 +18,15 @@ type repl_state = {
 
 (* --- Constants & Environment --- *)
 
-let all_tools : OrchCaml.Tool.packed_tool list = OrchCamlTools.All_tools.all_tools
+let all_tools : OrchCaml.Tool.packed_tool list = 
+  let base = OrchCamlTools.All_tools.all_tools in
+  let strict_mode = 
+    OrchCaml.Config.get_int_opt (Some "ORCHCAML_STRICT_MODE") "strict_mode"
+    |> Option.value ~default:1
+  in
+  if strict_mode = 2 then
+    List.filter (fun t -> OrchCaml.Tool.name_of_packed t <> "bash") base
+  else base
 
 let slash_commands = [
   "/model <name>",    "Switch the model";
@@ -51,7 +59,7 @@ let get_available_tools () =
         char '"'; group (rep (compl [char '"'])); char '"'
       ])
     in
-    List.map (fun f ->
+    let all = List.map (fun f ->
       let path = Filename.concat tools_dir f in
       let name = Filename.chop_suffix f ".ml" in
       let desc =
@@ -68,7 +76,14 @@ let get_available_tools () =
         with _ -> "No description available"
       in
       (name, desc)
-    ) ml_files
+    ) ml_files in
+    let strict_mode = 
+      OrchCaml.Config.get_int_opt (Some "ORCHCAML_STRICT_MODE") "strict_mode"
+      |> Option.value ~default:1
+    in
+    if strict_mode = 2 then
+      List.filter (fun (name, _) -> name <> "bash") all
+    else all
   else []
 
 let make_any_provider name model base_url =

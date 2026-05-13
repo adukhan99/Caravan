@@ -17,9 +17,20 @@ The following keys are supported at the top level of the `config.toml` file.
 | `model` | String | The default model name to use. | `MODEL` or `--model` flag |
 | `base_url` | String | Base URL for the provider API. | `--base-url` flag |
 | `system` | String | Default system prompt for new sessions. | `--system` flag |
+| `strict_mode` | Integer | Controls tool safety and visibility (see below). | `ORCHCAML_STRICT_MODE` |
 | `max_turns` | Integer | Maximum number of turns an agent can take (default: 10). | `MAX_TURNS` |
 | `openai_api_key` | String | API key for OpenAI-compatible providers. | `OPENAI_API_KEY` |
 | `search_api_key` | String | API key for the Brave Search tool. | `SEARCH_API_KEY` |
+
+## Strict Mode (`strict_mode`)
+
+The `strict_mode` key (default: `1`) controls the safety and behavior of the `bash` tool.
+
+| Level | Name | Description |
+| :--- | :--- | :--- |
+| `0` | Off | No restrictions. Multi-command strings (using `;` or `\n`) are executed sequentially. |
+| `1` | Strict | (Default) Enforces single-command execution. Tool calls containing `;` or `\n` are rejected, forcing the agent to issue separate calls for each step. |
+| `2` | Hidden | The `bash` tool is entirely disabled and removed from the agent's available tools. |
 
 ## Example `config.toml`
 
@@ -42,6 +53,7 @@ search_api_key = "..."
 OrchCaml checks environment variables before looking at the config file. For example:
 - `OPENAI_API_KEY` will override `openai_api_key` in the TOML.
 - `MAX_TURNS` will override `max_turns` in the TOML.
+- `ORCHCAML_STRICT_MODE` will override `strict_mode` in the TOML.
 
 ## Command Line Arguments
 

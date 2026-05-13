@@ -68,7 +68,10 @@ let execute_tool_calls _net sess tcs =
     | Some packed ->
       Printf.eprintf "%s: %s(%s)\n%!" (Ui.magenta "[Tool]") (Ui.bold tc.name) (Ui.dim tc.args);
       let output_str = Tool.dispatch packed tc.args in
-      Printf.eprintf "%s: %s\n%!" (Ui.dim "[Tool Result]") (Ui.dim output_str);
+      if tc.name = "finish" then
+        Ui.println_ansi (Ui.bold (Ui.green output_str))
+      else
+        Printf.eprintf "%s: %s\n%!" (Ui.dim "[Tool Result]") (Ui.dim output_str);
       tool_msg tc.id output_str
   ) tcs
 
@@ -87,7 +90,19 @@ let run_turn_step net sess (reply : chat_message) =
     in
     let has_finish = List.exists (fun tc -> tc.name = "finish") tcs in
     if has_finish then
-      Done ({ new_sess with memory = memory_with_tools }, reply.content)
+      let finish_tool_call = List.find (fun tc -> tc.name = "finish") tcs in
+      let finish_output =
+        match List.find_opt (fun (m : chat_message) ->
+          match m.role with Tool id -> id = finish_tool_call.id | _ -> false
+        ) tool_responses with
+        | Some m -> m.content
+        | None -> ""
+      in
+      let final_content =
+        if reply.content = "" then finish_output
+        else reply.content ^ "\n\n" ^ finish_output
+      in
+      Done ({ new_sess with memory = memory_with_tools }, final_content)
     else
       Continue { new_sess with memory = memory_with_tools }
   | _ ->
@@ -98,8 +113,8 @@ let rec run_conversations net sess =
   let outcome = run_turn_step net sess result.value in
   match outcome with
   | Continue sess' -> run_conversations net sess'
-  | Done (sess', _content) ->
-      (sess', { result with turn_count = Some sess'.turn_idx })
+  | Done (sess', content) ->
+      (sess', { result with value = { result.value with content }; turn_count = Some sess'.turn_idx })
 
 let turn net sess user_input =
   let user = user_msg user_input in
@@ -113,8 +128,8 @@ let rec run_conversations_stream net sess ~on_token =
   let outcome = run_turn_step net sess result_with_meta.value in
   match outcome with
   | Continue sess' -> run_conversations_stream net sess' ~on_token
-  | Done (sess', _content) ->
-      (sess', { result_with_meta with turn_count = Some sess'.turn_idx })
+  | Done (sess', content) ->
+      (sess', { result_with_meta with value = { result_with_meta.value with content }; turn_count = Some sess'.turn_idx })
 
 let turn_stream net sess user_input ~on_token =
   let user = user_msg user_input in

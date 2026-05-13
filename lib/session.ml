@@ -44,8 +44,23 @@ let set_system sess text =
   in
   { sess with cfg }
 
+let set_memory_size sess n =
+  let cfg = { sess.cfg with memory_size = n } in
+  let memory = Memory.Buffer.set_window sess.memory n in
+  { sess with cfg; memory }
+
+let set_options sess f =
+  let cfg = { sess.cfg with options = f sess.cfg.options } in
+  { sess with cfg }
+
 let clear sess =
   { sess with memory = Memory.Buffer.clear sess.memory; turn_idx = 0 }
+
+let with_provider sess provider =
+  { sess with provider }
+
+let with_model sess model =
+  { sess with cfg = { sess.cfg with model } }
 
 let history sess = Memory.Buffer.get sess.memory
 

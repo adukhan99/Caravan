@@ -30,19 +30,24 @@ let all_tools : OrchCaml.Tool.packed_tool list =
 
 let slash_commands = [
   "/model <name>",    "Switch the model";
-  "/system <text>",   "Set the system prompt";
+  "/provider <p> [u]", "Switch provider (ollama, openai, llama_cpp)";
+  "/system [text]",   "Set or clear the system prompt";
   "/agent <task>",    "Start an autonomous agentic loop";
-  "/nosystem",        "Clear the system prompt";
   "/memory <n>",      "Set context window (0 = max)";
   "/clear",           "Clear conversation history";
   "/history",         "Print conversation history";
   "/export [file]",   "Export session JSON to stdout or file";
   "/models",          "List available models";
+  "/providers",       "List available providers";
   "/tools",           "List available tools";
-  "/provider",        "Show current provider info";
-  "/temp <0.0-2.0>",  "Set temperature";
+  "/config",          "Show current session configuration";
+  "/temp <f>",        "Set temperature (0.0-2.0)";
+  "/top_p <f>",       "Set top_p (0.0-1.0)";
+  "/top_k <n>",       "Set top_k";
+  "/max_tokens <n>",  "Set max output tokens";
+  "/seed <n>",        "Set random seed";
   "/help",            "Show this help";
-  "/quit  or  /exit", "Exit OrchCaml";
+  "/quit",            "Exit OrchCaml";
 ]
 
 (* --- Tool & Provider Management --- *)
@@ -104,11 +109,35 @@ let on_token token =
   print_ansi (green token);
   flush stdout
 
+(* --- Slash Command Helpers --- *)
+
+let usage cmd msg = println_ansi (red (Printf.sprintf "Usage: %s %s" cmd msg))
+
+let update_float_opt st cmd name setter min_v max_v = function
+  | [v_str] ->
+    (match float_of_string_opt v_str with
+     | Some v when v >= min_v && v <= max_v ->
+       st.session <- Session.set_options st.session (setter v);
+       println_ansi (yellow (Printf.sprintf "  ✓ %s → %.2f" name v))
+     | _ -> usage cmd (Printf.sprintf "<float %.1f-%.1f>" min_v max_v))
+  | _ -> usage cmd (Printf.sprintf "<float %.1f-%.1f>" min_v max_v)
+
+let update_int_opt st cmd name setter = function
+  | [v_str] ->
+    (match int_of_string_opt v_str with
+     | Some v ->
+       st.session <- Session.set_options st.session (setter v);
+       println_ansi (yellow (Printf.sprintf "  ✓ %s → %d" name v))
+     | _ -> usage cmd "<int>")
+  | _ -> usage cmd "<int>"
+
 (* --- Slash Command Handling --- *)
 
 let handle_slash_command net st line =
-  let parts = String.split_on_char ' ' (String.trim line) in
+  let parts = String.split_on_char ' ' (String.trim line) |> List.filter (fun s -> s <> "") in
   match parts with
+  | [] -> ()
+
   | ["/quit"] | ["/exit"] | ["/q"] ->
     println_ansi (dim "\nGoodbye.");
     exit 0
@@ -118,8 +147,7 @@ let handle_slash_command net st line =
 
   | "/agent" :: rest ->
     let task = String.concat " " rest |> String.trim in
-    if task = "" then
-      println_ansi (red "Usage: /agent <task description>")
+    if task = "" then usage "/agent" "<task description>"
     else begin
       println_ansi (bold (yellow (Printf.sprintf "\n  Starting agentic loop for: %s" task)));
       (try
@@ -137,38 +165,41 @@ let handle_slash_command net st line =
     end
 
   | "/model" :: rest ->
-    let new_model = String.concat " " rest |> String.trim in
-    if new_model = "" then
-      println_ansi (red "Usage: /model <model-name>")
-    else begin
-      st.model <- new_model;
-      rebuild_session st;
-      println_ansi (yellow (Printf.sprintf "  ✓ Model → %s" new_model))
-    end
+    (match rest with
+     | [new_model] ->
+       st.model <- new_model;
+       st.session <- Session.with_model st.session new_model;
+       println_ansi (yellow (Printf.sprintf "  ✓ Model → %s" new_model))
+     | _ -> usage "/model" "<model-name>")
+
+  | "/provider" :: rest ->
+    (match rest with
+     | name :: rest ->
+       let base_url = if rest = [] then None else Some (String.concat " " rest) in
+       st.provider_name <- name;
+       st.base_url <- base_url;
+       let provider = make_any_provider name st.model base_url in
+       st.provider <- provider;
+       st.session <- Session.with_provider st.session provider;
+       println_ansi (yellow (Printf.sprintf "  ✓ Provider → %s %s" name (Option.value ~default:"" base_url)))
+     | [] -> usage "/provider" "<name> [url]")
 
   | "/system" :: rest ->
     let text = String.concat " " rest |> String.trim in
-    if text = "" then
-      println_ansi (red "Usage: /system <prompt text>")
-    else begin
-      st.session <- Session.set_system st.session text;
-      println_ansi (yellow (Printf.sprintf "  ✓ System prompt set (%d chars)" (String.length text)))
-    end
+    st.session <- Session.set_system st.session text;
+    if text = "" then println_ansi (yellow "  ✓ System prompt cleared")
+    else println_ansi (yellow (Printf.sprintf "  ✓ System prompt set (%d chars)" (String.length text)))
 
-  | ["/nosystem"] ->
-    st.session <- Session.set_system st.session "";
-    println_ansi (yellow "  ✓ System prompt cleared")
-
-  | "/memory" :: [n_str] ->
-    (match int_of_string_opt n_str with
-     | None   -> println_ansi (red "Usage: /memory <n>  (integer)")
-     | Some n ->
-       let window = if n = 0 then max_int else n in
-       st.session <- Session.create ~tools:all_tools
-         ~config:(fun m -> { (Session.default_config m) with memory_size = window })
-         st.model st.provider;
-       println_ansi (yellow (Printf.sprintf "  ✓ Memory window → %s"
-         (if n = 0 then "unlimited" else string_of_int n))))
+  | "/memory" :: rest ->
+    (match rest with
+     | [n_str] ->
+       (match int_of_string_opt n_str with
+        | Some n ->
+          st.session <- Session.set_memory_size st.session n;
+          println_ansi (yellow (Printf.sprintf "  ✓ Memory window → %s"
+            (if n = 0 then "unlimited" else string_of_int n)))
+        | None -> usage "/memory" "<n>")
+     | _ -> usage "/memory" "<n>")
 
   | ["/clear"] ->
     st.session <- Session.clear st.session;
@@ -176,33 +207,26 @@ let handle_slash_command net st line =
 
   | ["/history"] ->
     let hist = Session.history st.session in
-    if hist = [] then
-      println_ansi (dim "  (empty history)")
+    if hist = [] then println_ansi (dim "  (empty history)")
     else
       List.iter (fun msg ->
         let role_str = role_to_string msg.role in
         let colour = match msg.role with
-          | System    -> yellow
-          | User      -> cyan
-          | Assistant -> green
-          | Tool _    -> magenta
-        in
-        println_ansi (Printf.sprintf "%s: %s"
-          (bold (colour role_str))
-          (dim msg.content))
+          | System -> yellow | User -> cyan | Assistant -> green | Tool _ -> magenta in
+        println_ansi (Printf.sprintf "%s: %s" (bold (colour role_str)) (dim msg.content))
       ) hist
 
   | "/export" :: rest ->
-    let json = Session.export_json st.session in
-    let json_str = Yojson.Safe.pretty_to_string json in
     (match rest with
      | [file] ->
-       let oc = open_out file in
-       output_string oc json_str;
-       close_out oc;
-       println_ansi (yellow (Printf.sprintf "  ✓ Exported to %s" file))
-     | _ ->
-       print_endline json_str)
+       (try
+         let oc = open_out file in
+         output_string oc (Yojson.Safe.pretty_to_string (Session.export_json st.session));
+         close_out oc;
+         println_ansi (yellow (Printf.sprintf "  ✓ Exported to %s" file))
+       with exn -> println_ansi (red (Printf.sprintf "  Error: %s" (Printexc.to_string exn))))
+     | [] -> print_endline (Yojson.Safe.pretty_to_string (Session.export_json st.session))
+     | _ -> usage "/export" "[file]")
 
   | ["/models"] ->
     (try
@@ -212,46 +236,53 @@ let handle_slash_command net st line =
         let mark = if m = st.model then green " ✓ " else dim "   " in
         println_ansi (mark ^ white m)
       ) models
-    with exn ->
-      let msg = match exn with
-        | Failure s -> s
-        | _ -> Printexc.to_string exn
-      in
-      println_ansi (red (Printf.sprintf "  Error: %s" msg)))
+    with exn -> println_ansi (red (Printf.sprintf "  Error: %s" (Printexc.to_string exn))))
+
+  | ["/providers"] ->
+    println_ansi (bold (yellow "  Supported Providers:"));
+    List.iter (fun s -> println_ansi (Printf.sprintf "  - %s" s)) ["openai"; "ollama"; "llama_cpp"]
 
   | ["/tools"] ->
-    let tools = get_available_tools () in
-    if tools = [] then
-      println_ansi (yellow "  No tools found loosely in lib/tools/")
+    let tools = st.session.tools in
+    if tools = [] then println_ansi (yellow "  No tools registered.")
     else begin
       println_ansi (bold (yellow "  Available Tools:"));
-      List.iter (fun (name, desc) ->
-        println_ansi (Printf.sprintf "  %s  %s"
-          (cyan (Printf.sprintf "%-15s" name))
-          (dim desc))
-      ) tools
+      List.iter (fun p -> println_ansi (Printf.sprintf "  %s" (cyan (Tool.name_of_packed p)))) tools
     end
 
-  | ["/provider"] ->
-    let url_str = match st.base_url with Some u -> u | None -> "(default)" in
-    println_ansi (Printf.sprintf "  %s  %s  %s  %s"
-      (bold (blue "Provider:")) (white st.provider_name)
-      (dim ("model=" ^ st.model))
-      (dim ("url=" ^ url_str)))
+  | ["/config"] ->
+    let cfg = st.session.cfg in
+    let opts = cfg.options in
+    println_ansi (bold (yellow "  Current Configuration:"));
+    let p s v = println_ansi (Printf.sprintf "  %-15s %s" (blue (s^":")) (white v)) in
+    p "Provider" st.provider_name;
+    p "Model" st.model;
+    p "URL" (Option.value ~default:"(default)" st.base_url);
+    p "Memory" (string_of_int cfg.memory_size);
+    p "System" (match cfg.system with Some s -> Printf.sprintf "\"%s...\"" (String.sub s 0 (min (String.length s) 30)) | None -> "(none)");
+    println_ansi (bold (dim "  Generation Options:"));
+    let po n = function Some v -> println_ansi (Printf.sprintf "    %-13s %s" (cyan (n ^ ":")) (white v)) | None -> () in
+    po "Temp" (Option.map (Printf.sprintf "%.2f") opts.temperature);
+    po "Top P" (Option.map (Printf.sprintf "%.2f") opts.top_p);
+    po "Top K" (Option.map string_of_int opts.top_k);
+    po "Max Tokens" (Option.map string_of_int opts.max_tokens);
+    po "Seed" (Option.map string_of_int opts.seed);
+    if opts.stop <> [] then println_ansi (Printf.sprintf "    %-13s %s" (cyan "Stop:") (white (String.concat ", " opts.stop)))
 
-  | "/temp" :: [v_str] ->
-    (match float_of_string_opt v_str with
-     | None -> println_ansi (red "Usage: /temp <float 0.0-2.0>")
-     | Some temp ->
-       st.session <- Session.create ~tools:all_tools
-         ~config:(fun m -> { (Session.default_config m) with options = { (Session.default_config m).options with temperature = Some temp } })
-         st.model st.provider;
-       println_ansi (yellow (Printf.sprintf "  ✓ Temperature → %.2f" temp)))
+  | "/temp"       :: rest -> update_float_opt st "/temp" "Temperature" (fun v o -> { o with temperature = Some v }) 0.0 2.0 rest
+  | "/top_p"      :: rest -> update_float_opt st "/top_p" "Top P" (fun v o -> { o with top_p = Some v }) 0.0 1.0 rest
+  | "/top_k"      :: rest -> update_int_opt st "/top_k" "Top K" (fun v o -> { o with top_k = Some v }) rest
+  | "/max_tokens" :: rest -> update_int_opt st "/max_tokens" "Max Tokens" (fun v o -> { o with max_tokens = Some v }) rest
+  | "/seed"       :: rest -> update_int_opt st "/seed" "Seed" (fun v o -> { o with seed = Some v }) rest
+
+  | "/stop" :: rest ->
+    if rest = [] then (st.session <- Session.set_options st.session (fun o -> { o with stop = [] }); println_ansi (yellow "  ✓ Stop sequences cleared"))
+    else (st.session <- Session.set_options st.session (fun o -> { o with stop = rest }); println_ansi (yellow (Printf.sprintf "  ✓ Stop sequences → %s" (String.concat ", " rest))))
 
   | cmd :: _ ->
-    println_ansi (red (Printf.sprintf "  Unknown command: %s  (try /help)" cmd))
-
-  | [] -> ()
+    if String.length cmd > 0 && cmd.[0] = '/' then
+      println_ansi (red (Printf.sprintf "  Unknown command: %s  (try /help)" cmd))
+    else ()
 
 (* --- REPL Loop --- *)
 

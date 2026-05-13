@@ -16,6 +16,7 @@ end
 module Buffer : sig
   include MEMORY
   val create : ?window:int -> unit -> t
+  val set_window : t -> int -> t
 end = struct
   type t = {
     system_msgs : chat_message list;
@@ -46,6 +47,14 @@ end = struct
       let dq = { mem with rear = msg :: mem.rear; len = mem.len + 1 } in
       if dq.len > dq.window then drop_oldest dq
       else dq
+
+  let set_window mem new_window =
+    let window = if new_window = 0 then max_int else new_window in
+    let rec prune d =
+      if d.len > d.window then prune (drop_oldest d)
+      else d
+    in
+    prune { mem with window }
 
   let get mem =
     mem.system_msgs @ mem.front @ List.rev mem.rear

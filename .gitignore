@@ -36,4 +36,5 @@ setup.log
 _opam/
 
 # Generated documentation files
+*.rendered*
 docs/*.rendered*

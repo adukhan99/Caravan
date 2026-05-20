@@ -23,6 +23,7 @@ depends: [
   "otoml" {>= "1.0"}
   "ssl" {>= "0.7"}
   "eio-ssl" {>= "0.3"}
+  "redis-sync"
   "odoc" {with-doc}
 ]
 build: [

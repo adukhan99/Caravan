@@ -243,7 +243,7 @@ let handle_slash_command net st line =
     List.iter (fun s -> println_ansi (Printf.sprintf "  - %s" s)) ["openai"; "ollama"; "llama_cpp"]
 
   | ["/tools"] ->
-    let tools = st.session.tools in
+    let tools = Session.tools st.session in
     if tools = [] then println_ansi (yellow "  No tools registered.")
     else begin
       println_ansi (bold (yellow "  Available Tools:"));
@@ -251,7 +251,7 @@ let handle_slash_command net st line =
     end
 
   | ["/config"] ->
-    let cfg = st.session.cfg in
+    let cfg = Session.config st.session in
     let opts = cfg.options in
     println_ansi (bold (yellow "  Current Configuration:"));
     let p s v = println_ansi (Printf.sprintf "  %-15s %s" (blue (s^":")) (white v)) in

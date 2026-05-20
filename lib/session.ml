@@ -19,7 +19,7 @@ let default_config model = {
 type t = {
   cfg      : config;
   provider : Provider.packed_provider;
-  memory   : Memory.Buffer.t;
+  memory   : Memory.packed_memory;
   turn_idx : int;
   tools    : Tool.packed_tool list;
 }
@@ -30,7 +30,7 @@ let create ?(config = fun m -> default_config m) ?(tools=[]) model provider =
   {
     cfg;
     provider;
-    memory = Memory.Buffer.create ~window ();
+    memory = Memory.Mem ((module Memory.Ring), Memory.Ring.make ~window ());
     turn_idx = 0;
     tools;
   }
@@ -46,7 +46,8 @@ let set_system sess text =
 
 let set_memory_size sess n =
   let cfg = { sess.cfg with memory_size = n } in
-  let memory = Memory.Buffer.set_window sess.memory n in
+  let Memory.Mem ((module M), mem) = sess.memory in
+  let memory = Memory.Mem ((module M), M.set_window mem n) in
   { sess with cfg; memory }
 
 let set_options sess f =
@@ -54,23 +55,36 @@ let set_options sess f =
   { sess with cfg }
 
 let clear sess =
-  { sess with memory = Memory.Buffer.clear sess.memory; turn_idx = 0 }
+  let Memory.Mem ((module M), mem) = sess.memory in
+  { sess with memory = Memory.Mem ((module M), M.clear mem); turn_idx = 0 }
+
+let add_messages sess msgs =
+  let Memory.Mem ((module M), mem) = sess.memory in
+  let final_mem = List.fold_left M.add mem msgs in
+  { sess with memory = Memory.Mem ((module M), final_mem) }
 
 let with_provider sess provider =
   { sess with provider }
 
+let config sess = sess.cfg
+let tools sess = sess.tools
+
 let with_model sess model =
   { sess with cfg = { sess.cfg with model } }
 
-let history sess = Memory.Buffer.get sess.memory
+let history sess =
+  let Memory.Mem ((module M), mem) = sess.memory in
+  M.get mem
 
 let history_for_llm sess =
+  let Memory.Mem ((module M), mem) = sess.memory in
+  let hist = M.get mem in
   match sess.cfg.system with
-  | None     -> Memory.Buffer.get sess.memory
+  | None     -> hist
   | Some sys ->
     let sm = system_msg sys in
-    (match Memory.Buffer.get sess.memory with
-     | { role = System; _ } :: _ -> Memory.Buffer.get sess.memory
+    (match hist with
+     | { role = System; _ } :: _ -> hist
      | rest -> sm :: rest)
 
 let execute_tool_calls _net sess tcs =
@@ -95,13 +109,14 @@ type step_outcome =
   | Done     of t * string
 
 let run_turn_step net sess (reply : chat_message) =
-  let final_memory = Memory.Buffer.add sess.memory reply in
+  let Memory.Mem ((module M), mem) = sess.memory in
+  let final_memory = Memory.Mem ((module M), M.add mem reply) in
   let new_sess = { sess with memory = final_memory; turn_idx = sess.turn_idx + 1 } in
   match reply.tool_calls with
   | Some tcs when tcs <> [] ->
     let tool_responses = execute_tool_calls net new_sess tcs in
     let memory_with_tools =
-      List.fold_left Memory.Buffer.add new_sess.memory tool_responses
+      List.fold_left (fun (Memory.Mem ((module M2), m2)) r -> Memory.Mem ((module M2), M2.add m2 r)) new_sess.memory tool_responses
     in
     let has_finish = List.exists (fun tc -> tc.name = "finish") tcs in
     if has_finish then
@@ -133,7 +148,8 @@ let rec run_conversations net sess =
 
 let turn net sess user_input =
   let user = user_msg user_input in
-  let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
+  let Memory.Mem ((module M), mem) = sess.memory in
+  let sess' = { sess with memory = Memory.Mem ((module M), M.add mem user) } in
   run_conversations net sess'
 
 let rec run_conversations_stream net sess ~on_token =
@@ -148,20 +164,23 @@ let rec run_conversations_stream net sess ~on_token =
 
 let turn_stream net sess user_input ~on_token =
   let user = user_msg user_input in
-  let sess' = { sess with memory = Memory.Buffer.add sess.memory user } in
+  let Memory.Mem ((module M), mem) = sess.memory in
+  let sess' = { sess with memory = Memory.Mem ((module M), M.add mem user) } in
   run_conversations_stream net sess' ~on_token
 
 let export_json sess =
+  let Memory.Mem ((module M), mem) = sess.memory in
   `Assoc [
     ("model",    `String sess.cfg.model);
     ("turn_idx", `Int sess.turn_idx);
     ("system",   (match sess.cfg.system with
                   | None -> `Null | Some s -> `String s));
-    ("history",  Memory.Buffer.to_json sess.memory);
+    ("history",  M.to_json mem);
   ]
 
 let pp_history fmt sess =
+  let Memory.Mem ((module M), mem) = sess.memory in
   List.iter (fun msg ->
     let role_str = role_to_string msg.role in
     Format.fprintf fmt "@[<v>[%s]: %s@]@." role_str msg.content
-  ) (Memory.Buffer.get sess.memory)
+  ) (M.get mem)

@@ -1,31 +1,106 @@
-(** ANSI terminal styling. *)
+(** Categorical & Modular terminal styling. *)
 
 let is_tty = Unix.isatty Unix.stdout
 
-let ansi code s = Printf.sprintf "\027[%sm%s\027[0m" code s
+(* --- Categorical & Modular Rendering Abstractions --- *)
 
-let bold s    = ansi "1" s
-let dim s     = ansi "2" s
-let cyan s    = ansi "1;36" s
-let green s   = ansi "1;32" s
-let yellow s  = ansi "1;33" s
-let magenta s = ansi "1;35" s
-let red s     = ansi "1;31" s
-let white s   = ansi "0;97" s
-let blue s    = ansi "0;34" s
+module type RENDERER = sig
+  type t
+  val empty : t
+  val append : t -> t -> t
+  val render_styled : Document.style -> t -> t
+  val render_text : string -> t
+  val compile : t -> string
+end
 
-let print_ansi s =
-  if is_tty then print_string s
-  else
-    let re = 
-      let open Re in
-      compile (seq [
-        char '\027'; char '[';
-        rep (compl [char 'm']); char 'm'
-      ]) in
-    print_string (Re.replace_string re ~by:"" s)
+module AnsiRenderer = struct
+  type t = string
+  let empty = ""
+  let append = ( ^ )
 
-let println_ansi s = print_ansi s; print_char '\n'
+  let color_code = function
+    | Document.Cyan -> "36"
+    | Document.Green -> "32"
+    | Document.Yellow -> "33"
+    | Document.Magenta -> "35"
+    | Document.Red -> "31"
+    | Document.Blue -> "34"
+    | Document.White -> "97"
+
+  let style_code = function
+    | Document.Bold -> "1"
+    | Document.Dim -> "2"
+    | Document.Underline -> "4"
+    | Document.Foreground c -> "1;" ^ color_code c
+    | Document.Background c ->
+      (match c with
+       | Document.Cyan -> "46"
+       | Document.Green -> "42"
+       | Document.Yellow -> "43"
+       | Document.Magenta -> "45"
+       | Document.Red -> "41"
+       | Document.Blue -> "44"
+       | Document.White -> "107")
+
+  let render_styled s t =
+    if t = "" then "" else
+    let code = style_code s in
+    Printf.sprintf "\027[%sm%s\027[0m" code t
+
+  let render_text s = s
+  let compile t = t
+end
+
+module PlainTextRenderer = struct
+  type t = string
+  let empty = ""
+  let append = ( ^ )
+  let render_styled _s t = t
+  let render_text s = s
+  let compile t = t
+end
+
+let compile_document (type r) (module R : RENDERER with type t = r) (fmt_elem : 'a -> r) doc =
+  let rec loop = function
+    | Document.Empty -> R.empty
+    | Document.Text x -> fmt_elem x
+    | Document.Styled (st, d) -> R.render_styled st (loop d)
+    | Document.Concat docs ->
+      List.fold_left (fun acc d ->
+        R.append acc (loop d)
+      ) R.empty docs
+  in
+  loop doc
+
+module TermRenderer = struct
+  type t = string
+  let empty = ""
+  let append = ( ^ )
+  let render_styled s t =
+    if is_tty then AnsiRenderer.render_styled s t
+    else PlainTextRenderer.render_styled s t
+  let render_text s = s
+  let compile t = t
+end
+
+(* --- Type-Safe Style API Wrappers --- *)
+
+let style_doc style s =
+  compile_document (module TermRenderer) (fun x -> x) (Document.Styled (style, Document.Text s))
+
+let bold s      = style_doc Document.Bold s
+let dim s       = style_doc Document.Dim s
+let underline s = style_doc Document.Underline s
+let cyan s      = style_doc (Document.Foreground Document.Cyan) s
+let green s     = style_doc (Document.Foreground Document.Green) s
+let yellow s    = style_doc (Document.Foreground Document.Yellow) s
+let magenta s   = style_doc (Document.Foreground Document.Magenta) s
+let red s       = style_doc (Document.Foreground Document.Red) s
+let white s     = style_doc (Document.Foreground Document.White) s
+let blue s      = style_doc (Document.Foreground Document.Blue) s
+
+let print_ansi s = print_string s
+let println_ansi s = print_endline s
 
 let print_banner () =
   if is_tty then begin
@@ -43,3 +118,10 @@ let print_help cmds =
       (dim desc))
   ) cmds;
   print_newline ()
+
+module MakeTheme (R : RENDERER) = struct
+  let keyword s = R.render_styled Document.Bold (R.render_text s)
+  let error s = R.render_styled (Document.Foreground Document.Red) (R.render_text s)
+  let title s = R.render_styled (Document.Foreground Document.Cyan) (R.render_styled Document.Bold (R.render_text s))
+  let success s = R.render_styled (Document.Foreground Document.Green) (R.render_text s)
+end

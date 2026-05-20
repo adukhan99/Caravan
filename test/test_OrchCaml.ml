@@ -1,16 +1,16 @@
 open OrchCaml
 
-let test_memory_buffer () =
-  let mem = Memory.Buffer.create ~window:2 () in
+let test_memory_ring () =
+  let mem = Memory.Ring.make ~window:2 () in
   let msgs = Prompt.(exec (
     let* () = system "You are an assistant." in
     let* () = user "Hello!" in
     let* () = assistant "Hi!" in
     user "Next"
   )) in
-  let mem = List.fold_left Memory.Buffer.add mem msgs in
+  let mem = List.fold_left Memory.Ring.add mem msgs in
   
-  let hist = Memory.Buffer.get mem in
+  let hist = Memory.Ring.get mem in
   assert (List.length hist = 3);
   let roles = List.map (fun m -> m.Types.role) hist in
   assert (roles = [Types.System; Types.Assistant; Types.User]);
@@ -158,10 +158,74 @@ let test_tool_finish () =
   if res_no_sum <> "Task finished: Completed" then
     failwith ("Tool finish failed without summary, got: " ^ res_no_sum)
 
+let test_document_functor () =
+  let doc = Document.Concat [
+    Document.Text 42;
+    Document.Styled (Document.Bold, Document.Text 100)
+  ] in
+  (* Identity law *)
+  let doc_id = Document.Document.map (fun x -> x) doc in
+  assert (doc_id = doc);
+
+  (* Composition law *)
+  let f x = x * 2 in
+  let g x = x + 10 in
+  let doc_fg = Document.Document.map (fun x -> f (g x)) doc in
+  let doc_f_g = Document.Document.map f (Document.Document.map g doc) in
+  assert (doc_fg = doc_f_g);
+  ()
+
+let test_document_monoid () =
+  let d1 = Document.Text "hello" in
+  let d2 = Document.Text "world" in
+  let d3 = Document.Text "!" in
+
+  (* Identity law *)
+  assert (Document.DocumentMonoid.append Document.DocumentMonoid.empty d1 = d1);
+  assert (Document.DocumentMonoid.append d1 Document.DocumentMonoid.empty = d1);
+
+  (* Associativity law *)
+  let d12_3 = Document.DocumentMonoid.append (Document.DocumentMonoid.append d1 d2) d3 in
+  let d1_23 = Document.DocumentMonoid.append d1 (Document.DocumentMonoid.append d2 d3) in
+  assert (d12_3 = d1_23);
+  ()
+
+let test_formatter_profunctor () =
+  let base_fmt x = Document.Text (string_of_int x) in
+  let pre c = int_of_string c in
+  let post s = String.uppercase_ascii s in
+  let mapped_fmt = Formatter.Formatter.dimap pre post base_fmt in
+  
+  let res_doc = mapped_fmt "42" in
+  assert (res_doc = Document.Text "42");
+  ()
+
+let test_renderers () =
+  let doc = Document.Styled (Document.Foreground Document.Red, Document.Text "error") in
+  
+  (* Plain Text Renderer strips styles *)
+  let plain = Ui.compile_document (module Ui.PlainTextRenderer) (fun s -> s) doc in
+  assert (plain = "error");
+
+  (* ANSI Renderer applies escape codes *)
+  let ansi = Ui.compile_document (module Ui.AnsiRenderer) (fun s -> s) doc in
+  assert (ansi = "\027[1;31merror\027[0m");
+  ()
+
+let test_kleisli_composition () =
+  let f x = if x > 0 then Ok (x * 2) else Error "must be positive" in
+  let g y = if y < 100 then Ok (y + 5) else Error "too big" in
+  
+  let composed = Chain.Kleisli.(f >=> g) in
+  assert (composed 10 = Ok 25);
+  assert (composed (-5) = Error "must be positive");
+  assert (composed 60 = Error "too big");
+  ()
+
 let run_tests () =
   Printf.printf "Running tests...\n";
   Eio_main.run (fun env ->
-    test_memory_buffer ();
+    test_memory_ring ();
     test_parser_json ();
     test_parser_bool ();
     test_config ();
@@ -173,7 +237,13 @@ let run_tests () =
     test_usage_openai_parsing ();
     test_usage_llama_cpp_parsing ();
     test_monitor_format_usage ();
+    test_document_functor ();
+    test_document_monoid ();
+    test_formatter_profunctor ();
+    test_renderers ();
+    test_kleisli_composition ();
     Printf.printf "All tests passed.\n"
   )
 
 let () = run_tests ()
+

@@ -43,6 +43,7 @@
   (ssl
    (>= 0.7))
   (eio-ssl
-   (>= 0.3)))
+   (>= 0.3))
+  redis-sync)
  (tags
   ("llm" "orchestration" "ai" "ollama" "openai" "llama.cpp")))

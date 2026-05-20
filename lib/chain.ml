@@ -117,3 +117,13 @@ let retry ~n chain x =
       end
   in
   loop 0
+
+(* --- Kleisli Category Composition --- *)
+
+module Kleisli = struct
+  let compose (f : 'a -> ('b, 'e) result) (g : 'b -> ('c, 'e) result) : 'a -> ('c, 'e) result =
+    fun x -> Result.bind (f x) g
+
+  let ( >=> ) = compose
+end
+

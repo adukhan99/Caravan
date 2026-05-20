@@ -1,0 +1,67 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'lib/**'
+      - 'bin/**'
+      - 'README.md'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Mermaid CLI
+        run: npm install -g @mermaid-js/mermaid-cli
+
+      - name: Render Mermaid Diagrams
+        run: ./scripts/render_docs.sh
+
+      - name: Setup OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5.2.0
+
+      - name: Install Dependencies
+        run: |
+          opam pin add -n OrchCaml .
+          opam install . --deps-only --with-doc
+
+      - name: Build Documentation
+        run: opam exec -- dune build @doc
+
+      - name: Prepare Deployment Folder
+        run: |
+          mkdir -p deploy
+          # Copy markdown docs
+          cp -r docs/* deploy/
+          # Copy README
+          cp README.md deploy/
+          # Copy odoc output
+          mkdir -p deploy/api
+          if [ -d "_build/default/_doc/_html" ]; then
+            cp -r _build/default/_doc/_html/* deploy/api/
+          fi
+
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: deploy
+          branch: gh-pages
+          commit_message: "docs: update rendered diagrams and api docs"

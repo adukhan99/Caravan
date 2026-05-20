@@ -55,5 +55,4 @@ let exec_with p = p ()
 
 let exec_in_session p sess =
   let msgs = exec p in
-  let memory = List.fold_left Memory.Buffer.add sess.Session.memory msgs in
-  { sess with Session.memory }
+  Session.add_messages sess msgs

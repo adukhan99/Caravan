@@ -9,10 +9,13 @@
   yojson
   re
   otoml
-  fmt)
+  fmt
+  redis-sync)
  (modules
   Config
   Types
+  Document
+  Formatter
   Memory
   Parser
   Ui

@@ -14,7 +14,7 @@ fi
 # Process all .md files in docs/ and the root directory
 # We look in docs/ and the current directory (for README.md)
 find docs . -maxdepth 1 -name "*.md" -not -path "./_build/*" | while read -r file; do
-    if grep -q "```mermaid" "$file"; then
+    if grep -q '```mermaid' "$file"; then
         echo "Processing $file..."
         
         # Use mmdc to render. mmdc will replace the blocks and create -1.svg, -2.svg, etc.

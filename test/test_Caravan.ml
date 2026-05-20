@@ -1,4 +1,4 @@
-open OrchCaml
+open Caravan
 
 let test_memory_ring () =
   let mem = Memory.Ring.make ~window:2 () in
@@ -28,8 +28,8 @@ let test_parser_bool () =
   | _ -> failwith "Bool parser failure"
 
 let test_config () =
-  Unix.putenv "ORCHCAML_DUMMY_KEY" "dummy_val";
-  match Config.get_string_opt (Some "ORCHCAML_DUMMY_KEY") "nonexistent" with
+  Unix.putenv "CARAVAN_DUMMY_KEY" "dummy_val";
+  match Config.get_string_opt (Some "CARAVAN_DUMMY_KEY") "nonexistent" with
   | Some "dummy_val" -> ()
   | _ -> failwith "Config.get_string_opt failed to read environment variable"
 
@@ -40,7 +40,7 @@ let test_tool_read_file () =
   close_out ch;
   
   let json_args = Printf.sprintf {|{"path": "%s"}|} path in
-  let tool = Tool.Tool (module OrchCamlTools.Read_file.Read_file) in
+  let tool = Tool.Tool (module CaravanTools.Read_file.Read_file) in
   let res = Tool.dispatch tool json_args in
   
   Sys.remove path;
@@ -51,7 +51,7 @@ let test_tool_touch () =
   let path = "test_dummy_touch.txt" in
   if Sys.file_exists path then Sys.remove path;
   let json_args = Printf.sprintf {|{"path": "%s"}|} path in
-  let tool = Tool.Tool (module OrchCamlTools.Touch.Touch) in
+  let tool = Tool.Tool (module CaravanTools.Touch.Touch) in
   let res = Tool.dispatch tool json_args in
   
   let exists = Sys.file_exists path in
@@ -65,7 +65,7 @@ let test_tool_mkdir () =
   if Sys.file_exists dir_path then Unix.rmdir dir_path;
   
   let json_args = Printf.sprintf {|{"path": "%s"}|} dir_path in
-  let tool = Tool.Tool (module OrchCamlTools.Mkdir.Mkdir) in
+  let tool = Tool.Tool (module CaravanTools.Mkdir.Mkdir) in
   let res = Tool.dispatch tool json_args in
   
   let exists = Sys.file_exists dir_path && Sys.is_directory dir_path in
@@ -76,7 +76,7 @@ let test_tool_mkdir () =
 
 let test_tool_ls () =
   let json_args = {|{"path": "."}|} in
-  let tool = Tool.Tool (module OrchCamlTools.Ls.Ls) in
+  let tool = Tool.Tool (module CaravanTools.Ls.Ls) in
   let res = Tool.dispatch tool json_args in
   
   if String.length res = 0 then
@@ -146,7 +146,7 @@ let test_usage_llama_cpp_parsing () =
    | None -> failwith "usage field was None")
 
 let test_tool_finish () =
-  let tool = Tool.Tool (module OrchCamlTools.Finish.Finish) in
+  let tool = Tool.Tool (module CaravanTools.Finish.Finish) in
   
   let json_args = {|{"summary": "all done"}|} in
   let res = Tool.dispatch tool json_args in

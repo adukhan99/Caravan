@@ -1,8 +1,8 @@
 (** Ollama local LLM backend. *)
 
-open OrchCaml.Types
-open OrchCaml.Provider
-open OrchCaml.Tool
+open Caravan.Types
+open Caravan.Provider
+open Caravan.Tool
 
 type config = {
   base_url : string;

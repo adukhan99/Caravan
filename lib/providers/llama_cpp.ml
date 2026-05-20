@@ -1,9 +1,9 @@
 (** llama.cpp local LLM backend. *)
 
-open OrchCaml.Types
-open OrchCaml.Provider
-open OrchCaml.Config
-open OrchCaml.Tool
+open Caravan.Types
+open Caravan.Provider
+open Caravan.Config
+open Caravan.Tool
 
 type config = {
   base_url : string;

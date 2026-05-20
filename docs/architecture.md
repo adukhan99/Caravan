@@ -1,6 +1,6 @@
-# OrchCaml Project Architecture
+# Caravan Project Architecture
 
-This document provides a high-level overview of the OrchCaml project structure and how the different components interact to create an agentic loop.
+This document provides a high-level overview of the Caravan project structure and how the different components interact to create an agentic loop.
 
 ```mermaid
 flowchart TB
@@ -30,7 +30,7 @@ flowchart TB
     end
 
     subgraph Settings ["Configuration"]
-        TOML["~/.orchcaml/config.toml"]
+        TOML["~/.caravan/config.toml"]
         Config["lib/config.ml"]
     end
 

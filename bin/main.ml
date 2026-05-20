@@ -1,8 +1,8 @@
 (** Interactive TUI / REPL entry point. *)
 
-open OrchCaml
-open OrchCaml.Types
-open OrchCaml.Config
+open Caravan
+open Caravan.Types
+open Caravan.Config
 open Ui
 open Cmdliner
 
@@ -18,14 +18,14 @@ type repl_state = {
 
 (* --- Constants & Environment --- *)
 
-let all_tools : OrchCaml.Tool.packed_tool list = 
-  let base = OrchCamlTools.All_tools.all_tools in
+let all_tools : Caravan.Tool.packed_tool list = 
+  let base = CaravanTools.All_tools.all_tools in
   let strict_mode = 
-    OrchCaml.Config.get_int_opt (Some "ORCHCAML_STRICT_MODE") "strict_mode"
+    Caravan.Config.get_int_opt (Some "CARAVAN_STRICT_MODE") "strict_mode"
     |> Option.value ~default:1
   in
   if strict_mode = 2 then
-    List.filter (fun t -> OrchCaml.Tool.name_of_packed t <> "bash") base
+    List.filter (fun t -> Caravan.Tool.name_of_packed t <> "bash") base
   else base
 
 let slash_commands = [
@@ -47,7 +47,7 @@ let slash_commands = [
   "/max_tokens <n>",  "Set max output tokens";
   "/seed <n>",        "Set random seed";
   "/help",            "Show this help";
-  "/quit",            "Exit OrchCaml";
+  "/quit",            "Exit Caravan";
 ]
 
 (* --- Tool & Provider Management --- *)
@@ -83,7 +83,7 @@ let get_available_tools () =
       (name, desc)
     ) ml_files in
     let strict_mode = 
-      OrchCaml.Config.get_int_opt (Some "ORCHCAML_STRICT_MODE") "strict_mode"
+      Caravan.Config.get_int_opt (Some "CARAVAN_STRICT_MODE") "strict_mode"
       |> Option.value ~default:1
     in
     if strict_mode = 2 then
@@ -93,9 +93,9 @@ let get_available_tools () =
 
 let make_any_provider name model base_url =
   let factories = [
-    ("openai",    fun ~base_url ~model -> OrchCamlProviders.Openai.make_provider ?base_url ~model ());
-    ("llama_cpp", fun ~base_url ~model -> OrchCamlProviders.Llama_cpp.make_provider ?base_url ~model ());
-    ("ollama",    fun ~base_url ~model -> OrchCamlProviders.Ollama.make_provider ?base_url ~model ());
+    ("openai",    fun ~base_url ~model -> CaravanProviders.Openai.make_provider ?base_url ~model ());
+    ("llama_cpp", fun ~base_url ~model -> CaravanProviders.Llama_cpp.make_provider ?base_url ~model ());
+    ("ollama",    fun ~base_url ~model -> CaravanProviders.Ollama.make_provider ?base_url ~model ());
   ] in
   let maker = List.assoc_opt name factories |> Option.value ~default:(List.assoc "ollama" factories) in
   maker ~base_url ~model
@@ -344,7 +344,7 @@ let cmd_complete net ~model ~provider_name ~base_url ~system prompt_text =
     print_newline ();
     if is_tty then println_ansi (dim (Monitor.format_usage result))
   with exn ->
-    Printf.eprintf "[OrchCaml] Error: %s\n%!" (Printexc.to_string exn))
+    Printf.eprintf "[Caravan] Error: %s\n%!" (Printexc.to_string exn))
 
 let cmd_models net ~provider_name ~base_url ~model () =
   let provider = make_any_provider provider_name model base_url in
@@ -358,7 +358,7 @@ let cmd_models net ~provider_name ~base_url ~model () =
       | Failure s -> s
       | _ -> Printexc.to_string exn
     in
-    Printf.eprintf "[OrchCaml] Error: %s\n%!" msg;
+    Printf.eprintf "[Caravan] Error: %s\n%!" msg;
     exit 1)
 
 (* --- CLI Configuration (Cmdliner) --- *)
@@ -445,7 +445,7 @@ let models_cmd =
 
 let () =
   let doc = "Typed LLM orchestration framework and interactive REPL." in
-  let info = Cmd.info "orchcaml"
+  let info = Cmd.info "caravan"
     ~doc
     ~version:"0.1.0"
   in

@@ -1,3 +1,4 @@
 (test
- (name test_OrchCaml)
- (libraries OrchCaml OrchCamlTools eio eio_main))
+ (name test_Caravan)
+ (libraries Caravan CaravanTools eio eio_main))
+

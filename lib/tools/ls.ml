@@ -1,4 +1,4 @@
-open OrchCaml.Tool
+open Caravan.Tool
 
 module Ls : TOOL with type input = string and type output = string = struct
   let name = "ls"

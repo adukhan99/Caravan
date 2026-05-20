@@ -2,7 +2,7 @@
 
 let config_path =
   let home = match Sys.getenv_opt "HOME" with Some h -> h | None -> "." in
-  Filename.concat home ".orchcaml/config.toml"
+  Filename.concat home ".caravan/config.toml"
 
 let ensure_config_exists () =
   let dir = Filename.dirname config_path in
@@ -11,7 +11,7 @@ let ensure_config_exists () =
   if not (Sys.file_exists config_path) then
     try
       let oc = open_out config_path in
-      output_string oc "# OrchCaml Configuration\n\n";
+      output_string oc "# Caravan Configuration\n\n";
       close_out oc
     with _ -> ()
 
@@ -20,7 +20,7 @@ let load_toml () =
   if Sys.file_exists config_path then
     try Some (Otoml.Parser.from_file config_path)
     with exn ->
-      Printf.eprintf "[OrchCaml] Warning: Failed to parse %s: %s\n%!"
+      Printf.eprintf "[Caravan] Warning: Failed to parse %s: %s\n%!"
         config_path (Printexc.to_string exn);
       None
   else None

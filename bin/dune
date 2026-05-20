@@ -1,10 +1,10 @@
 (executable
- (public_name orchcaml)
+ (public_name caravan)
  (name main)
  (libraries
-  OrchCaml
-  OrchCamlProviders
-  OrchCamlTools
+  Caravan
+  CaravanProviders
+  CaravanTools
   eio
   eio_main
   cmdliner

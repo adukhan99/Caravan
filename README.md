@@ -1,8 +1,8 @@
-# OrchCaml
+# Caravan
 
-**OrchCaml** is a functional, type-safe LLM orchestration framework for OCaml. It provides a structured way to build, compose, and deploy LLM pipelines with strong compile-time guarantees, leveraging OCaml 5's algebraic effects and Eio for concurrency.
+**Caravan** is a functional, type-safe LLM orchestration framework for OCaml. It provides a structured way to build, compose, and deploy LLM pipelines with strong compile-time guarantees, leveraging OCaml 5's algebraic effects and Eio for concurrency.
 
-Inspired by LangChain but designed for the OCaml ecosystem, OrchCaml models LLM interactions as typed functions flowing through composable "chains."
+Inspired by LangChain but designed for the OCaml ecosystem, Caravan models LLM interactions as typed functions flowing through composable "chains."
 
 ## Key Features
 
@@ -19,12 +19,12 @@ Inspired by LangChain but designed for the OCaml ecosystem, OrchCaml models LLM 
 
 ## Installation
 
-OrchCaml requires OCaml 5.0+ and Dune.
+Caravan requires OCaml 5.0+ and Dune.
 
 ```bash
 # Clone the repository
-git clone https://github.com/adukhan99/OrchCaml.git
-cd OrchCaml
+git clone https://github.com/adukhan99/Caravan.git
+cd Caravan
 
 # Install dependencies
 opam install . --deps-only
@@ -38,8 +38,8 @@ dune build
 Building a typed pipeline that takes a topic and returns a list of facts:
 
 ```ocaml
-open OrchCaml
-open OrchCaml.Chain
+open Caravan
+open Caravan.Chain
 
 let fact_chain net provider =
   (* 1. Define the prompt template *)
@@ -52,7 +52,7 @@ let fact_chain net provider =
   |>> parse Parser.numbered_list
 
 let () = Eio_main.run (fun env ->
-  let provider = OrchCamlProviders.Ollama.make_provider ~model:"llama3.2" () in
+  let provider = CaravanProviders.Ollama.make_provider ~model:"llama3.2" () in
   let result = run (fact_chain env#net provider) [("topic", "OCaml")] in
   match result with
   | Ok facts -> List.iter (Printf.printf "- %s\n") facts
@@ -62,18 +62,18 @@ let () = Eio_main.run (fun env ->
 
 ## Quick Start: The TUI
 
-OrchCaml comes with a powerful CLI tool for interactive use. It is highly recommended to set up a [configuration file](docs/configuration.md) to manage your provider settings and API keys.
+Caravan comes with a powerful CLI tool for interactive use. It is highly recommended to set up a [configuration file](docs/configuration.md) to manage your provider settings and API keys.
 
 ```bash
 # Start the REPL (uses local Ollama by default)
-dune exec orchcaml
+dune exec caravan
 
 # Use OpenAI-compatible provider
 export OPENAI_API_KEY="sk-..."
-dune exec orchcaml -- --provider openai --model gpt-4o
+dune exec caravan -- --provider openai --model gpt-4o
 
 # Run a single completion
-dune exec orchcaml complete "Why is functional programming useful?"
+dune exec caravan complete "Why is functional programming useful?"
 ```
 
 ### REPL Slash Commands
@@ -89,21 +89,21 @@ Inside the REPL, use these commands to control the session:
 
 ## Configuration
 
-OrchCaml can be configured via a TOML file at `~/.orchcaml/config.toml` or via environment variables.
+Caravan can be configured via a TOML file at `~/.caravan/config.toml` or via environment variables.
 
 See the [Configuration Guide](docs/configuration.md) for a full list of available options and an [example_config.toml](example_config.toml).
 
 ### Quick Setup
 
 ```bash
-mkdir -p ~/.orchcaml
-cp example_config.toml ~/.orchcaml/config.toml
+mkdir -p ~/.caravan
+cp example_config.toml ~/.caravan/config.toml
 # Edit the file with your API keys and preferred model
 ```
 
 ## Architecture
 
-OrchCaml is built with a modular architecture that separates the core logic from the pluggable backends and tools.
+Caravan is built with a modular architecture that separates the core logic from the pluggable backends and tools.
 
 ```mermaid
 flowchart TB
@@ -133,7 +133,7 @@ flowchart TB
     end
 
     subgraph Settings ["Configuration"]
-        TOML["~/.orchcaml/config.toml"]
+        TOML["~/.caravan/config.toml"]
         Config["lib/config.ml"]
     end
 
@@ -169,14 +169,14 @@ flowchart TB
     class Chain,Template dsl;
 ```
 
-- **`OrchCaml.Types`**
+- **`Caravan.Types`**
 : Foundational types for messages, roles, and results.
-- **`OrchCaml.Chain`**: The core DSL for pipeline composition.
-- **`OrchCaml.Agent`**: Logic for autonomous ReAct loops.
-- **`OrchCaml.Tool`**: Effect-based tool definition and dispatch.
-- **`OrchCaml.Provider`**: Abstract interface for LLM backends.
-- **`OrchCaml.Parser`**: Combinators for turning text into types.
-- **`OrchCaml.Session`**: Higher-level manager for stateful chat and tools.
+- **`Caravan.Chain`**: The core DSL for pipeline composition.
+- **`Caravan.Agent`**: Logic for autonomous ReAct loops.
+- **`Caravan.Tool`**: Effect-based tool definition and dispatch.
+- **`Caravan.Provider`**: Abstract interface for LLM backends.
+- **`Caravan.Parser`**: Combinators for turning text into types.
+- **`Caravan.Session`**: Higher-level manager for stateful chat and tools.
 
 ## License
 

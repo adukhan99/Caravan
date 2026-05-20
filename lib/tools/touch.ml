@@ -1,4 +1,4 @@
-open OrchCaml.Tool
+open Caravan.Tool
 
 module Touch : TOOL with type input = string and type output = (unit, string) result = struct
   let name = "touch"

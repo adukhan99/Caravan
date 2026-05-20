@@ -1,23 +1,23 @@
 (lang dune 3.21)
 
-(name OrchCaml)
+(name Caravan)
 
 (generate_opam_files true)
 
 (source
- (github adukhan99/OrchCaml))
+ (github adukhan99/Caravan))
 
-(authors "OrchCaml Contributors")
+(authors "Caravan Contributors")
 
-(maintainers "OrchCaml Contributors")
+(maintainers "Caravan Contributors")
 
 (license GPL-3.0-or-later)
 
 (package
- (name OrchCaml)
+ (name Caravan)
  (synopsis "A typed LLM orchestration framework for OCaml")
  (description
-  "OrchCaml provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible, llama.cpp), output parsers, prompt templates, conversation memory, and an interactive TUI.")
+  "Caravan provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible, llama.cpp), output parsers, prompt templates, conversation memory, and an interactive TUI.")
  (depends
   ocaml
   (dune

@@ -1,7 +1,7 @@
 (library
- (name OrchCamlProviders)
+ (name CaravanProviders)
  (libraries
-  OrchCaml
+  Caravan
   eio
   eio_main
   cohttp-eio

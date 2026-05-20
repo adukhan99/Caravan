@@ -40,7 +40,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          opam pin add -n OrchCaml .
+          opam pin add -n Caravan .
           opam install . --deps-only --with-doc
 
       - name: Build Documentation

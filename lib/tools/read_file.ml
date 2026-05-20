@@ -1,4 +1,4 @@
-open OrchCaml.Tool
+open Caravan.Tool
 
 module Read_file : TOOL with type input = string and type output = (string, string) result = struct
   let name = "read_file"

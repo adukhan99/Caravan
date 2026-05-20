@@ -105,7 +105,7 @@ let println_ansi s = print_endline s
 let print_banner () =
   if is_tty then begin
     println_ansi (cyan "╔═════════════════════════════════════════════════╗");
-    println_ansi (cyan "║  " ^ bold (white "OrchCaml") ^ white "  v0.1  —  Typed LLM Orchestration     " ^ cyan "║");
+    println_ansi (cyan "║  " ^ bold (white "Caravan") ^ white "  v0.1  —  Typed LLM Orchestration     " ^ cyan "║");
     println_ansi (cyan "╚═════════════════════════════════════════════════╝");
     print_newline ()
   end

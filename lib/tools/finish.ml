@@ -1,6 +1,6 @@
 (** Terminal tool for agents to signal completion. *)
 
-open OrchCaml.Tool
+open Caravan.Tool
 open Yojson.Safe.Util
 
 module Finish : TOOL = struct

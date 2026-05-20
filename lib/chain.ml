@@ -112,7 +112,7 @@ let retry ~n chain x =
     | Error e ->
       if i >= n then Error e
       else begin
-        Printf.eprintf "[OrchCaml] Retry %d/%d: %s\n%!" (i+1) n e;
+        Printf.eprintf "[Caravan] Retry %d/%d: %s\n%!" (i+1) n e;
         loop (i + 1)
       end
   in

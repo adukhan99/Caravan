@@ -1,5 +1,5 @@
 (library
- (name OrchCaml)
+ (name Caravan)
  (libraries
   unix
   eio

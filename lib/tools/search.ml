@@ -1,5 +1,5 @@
-open OrchCaml.Tool
-open OrchCaml.Config
+open Caravan.Tool
+open Caravan.Config
 
 module Search : TOOL = struct
 
@@ -113,7 +113,7 @@ module Search : TOOL = struct
     | None ->
       Error
         "No Search API key found. Set SEARCH_API_KEY or add \
-         search_api_key under [tools] in ~/.orchcaml/config.toml."
+         search_api_key under [tools] in ~/.caravan/config.toml."
     | Some _api_key ->
       (match Effect.perform Get_net with
        | net -> do_search net input

@@ -1,4 +1,4 @@
-open OrchCaml.Tool
+open Caravan.Tool
 
 module Mkdir : TOOL with type input = string and type output = (unit, string) result = struct
   let name = "mkdir"

@@ -1,7 +1,7 @@
 let () =
   let files = Sys.readdir "." in
   let out = open_out "all_tools.ml" in
-  Printf.fprintf out "let all_tools : OrchCaml.Tool.packed_tool list = [\n";
+  Printf.fprintf out "let all_tools : Caravan.Tool.packed_tool list = [\n";
   Array.iter (fun f ->
     if Filename.check_suffix f ".ml" && f <> "all_tools.ml" && f <> "gen_tools.ml" then
       let name = Filename.chop_suffix f ".ml" in
@@ -26,7 +26,7 @@ let () =
           in search 0
         in
         if has_mod then
-          Printf.fprintf out "  OrchCaml.Tool.Tool (module %s.%s);\n" cap_name cap_name
+          Printf.fprintf out "  Caravan.Tool.Tool (module %s.%s);\n" cap_name cap_name
   ) files;
   Printf.fprintf out "]\n";
   close_out out

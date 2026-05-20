@@ -1,6 +1,6 @@
 (library
- (name OrchCamlTools)
- (libraries OrchCaml unix yojson re cohttp-eio eio eio_main uri ssl eio-ssl)
+ (name CaravanTools)
+ (libraries Caravan unix yojson re cohttp-eio eio eio_main uri ssl eio-ssl)
  (modules (:standard \ gen_tools)))
 
 (rule

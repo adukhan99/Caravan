@@ -1,14 +1,14 @@
 (** OpenAI-compatible LLM backend. *)
 
-open OrchCaml.Types
-open OrchCaml.Provider
-open OrchCaml.Config
-open OrchCaml.Tool
+open Caravan.Types
+open Caravan.Provider
+open Caravan.Config
+open Caravan.Tool
 
 let load_api_key_from_env () =
   match get_string_opt (Some "OPENAI_API_KEY") "openai_api_key" with
   | Some k -> k
-  | None -> failwith "OPENAI_API_KEY not found in env or ~/.orchcaml/config.toml"
+  | None -> failwith "OPENAI_API_KEY not found in env or ~/.caravan/config.toml"
 
 let load_org_id () = Sys.getenv_opt "OPENAI_ORG_ID"
 

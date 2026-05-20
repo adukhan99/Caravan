@@ -1,4 +1,4 @@
-open OrchCaml.Tool
+open Caravan.Tool
 
 module Fetch : TOOL = struct
 
@@ -82,7 +82,7 @@ module Fetch : TOOL = struct
     let client = Cohttp_eio.Client.make ~https:(Some https) net in
     let headers = Http.Header.of_list [
       ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
-      ("User-Agent", "OrchCaml WebFetch/1.0");
+      ("User-Agent", "Caravan WebFetch/1.0");
     ] in
     try
       Eio.Switch.run @@ fun sw ->

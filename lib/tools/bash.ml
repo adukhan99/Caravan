@@ -1,6 +1,6 @@
-open OrchCaml.Tool
+open Caravan.Tool
 let strict_mode =
-  OrchCaml.Config.get_int_opt (Some "ORCHCAML_STRICT_MODE") "strict_mode"
+  Caravan.Config.get_int_opt (Some "CARAVAN_STRICT_MODE") "strict_mode"
   |> Option.value ~default:1
 
 module Bash : TOOL with type input = string and type output = string = struct

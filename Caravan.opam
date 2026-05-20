@@ -2,13 +2,13 @@
 opam-version: "2.0"
 synopsis: "A typed LLM orchestration framework for OCaml"
 description:
-  "OrchCaml provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible, llama.cpp), output parsers, prompt templates, conversation memory, and an interactive TUI."
-maintainer: ["OrchCaml Contributors"]
-authors: ["OrchCaml Contributors"]
+  "Caravan provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible, llama.cpp), output parsers, prompt templates, conversation memory, and an interactive TUI."
+maintainer: ["Caravan Contributors"]
+authors: ["Caravan Contributors"]
 license: "GPL-3.0-or-later"
 tags: ["llm" "orchestration" "ai" "ollama" "openai" "llama.cpp"]
-homepage: "https://github.com/adukhan99/OrchCaml"
-bug-reports: "https://github.com/adukhan99/OrchCaml/issues"
+homepage: "https://github.com/adukhan99/Caravan"
+bug-reports: "https://github.com/adukhan99/Caravan/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.21"}
@@ -40,5 +40,5 @@ build: [
     "@doc" {with-doc}
   ]
 ]
-dev-repo: "git+https://github.com/adukhan99/OrchCaml.git"
+dev-repo: "git+https://github.com/adukhan99/Caravan.git"
 x-maintenance-intent: ["(latest)"]

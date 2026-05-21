@@ -76,3 +76,46 @@ let get_bool_opt env_var toml_key =
                   | None -> get_bool toml_key)
                | _ -> get_bool toml_key)
   | None -> get_bool toml_key
+
+type mcp_server_config = {
+  name      : string;
+  transport : string;
+  command   : string;
+  args      : string list;
+}
+
+let get_mcp_servers () =
+  match Lazy.force toml_ast with
+  | None -> []
+  | Some ast ->
+    try
+      let servers_node = Otoml.find ast (fun x -> x) ["mcp"; "servers"] in
+      let elements =
+        match servers_node with
+        | Otoml.TomlArray l
+        | Otoml.TomlTableArray l -> l
+        | _ -> []
+      in
+      List.filter_map (fun item ->
+        match item with
+        | Otoml.TomlTable fields
+        | Otoml.TomlInlineTable fields ->
+          let get_field k = List.assoc_opt k fields in
+          let name = match get_field "name" with Some (Otoml.TomlString s) -> Some s | _ -> None in
+          let transport = match get_field "transport" with Some (Otoml.TomlString s) -> Some s | _ -> None in
+          let command = match get_field "command" with Some (Otoml.TomlString s) -> Some s | _ -> None in
+          let args =
+            match get_field "args" with
+            | Some (Otoml.TomlArray arr)
+            | Some (Otoml.TomlTableArray arr) ->
+              List.filter_map (function Otoml.TomlString s -> Some s | _ -> None) arr
+            | _ -> []
+          in
+          (match name, transport, command with
+           | Some name, Some transport, Some command ->
+             Some { name; transport; command; args }
+           | _ -> None)
+        | _ -> None
+      ) elements
+    with _ -> []
+

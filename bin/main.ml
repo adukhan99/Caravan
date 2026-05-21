@@ -18,7 +18,7 @@ type repl_state = {
 
 (* --- Constants & Environment --- *)
 
-let all_tools : Caravan.Tool.packed_tool list = 
+let static_tools : Caravan.Tool.packed_tool list = 
   let base = CaravanTools.All_tools.all_tools in
   let strict_mode = 
     Caravan.Config.get_int_opt (Some "CARAVAN_STRICT_MODE") "strict_mode"
@@ -27,6 +27,18 @@ let all_tools : Caravan.Tool.packed_tool list =
   if strict_mode = 2 then
     List.filter (fun t -> Caravan.Tool.name_of_packed t <> "bash") base
   else base
+
+let all_tools_ref = ref static_tools
+
+let all_tools () = !all_tools_ref
+
+let init_mcp () =
+  let configs = Config.get_mcp_servers () in
+  if configs <> [] then begin
+    let mcp = Caravan.Mcp.init_mcp_servers configs in
+    all_tools_ref := static_tools @ mcp
+  end
+
 
 let slash_commands = [
   "/model <name>",    "Switch the model";
@@ -103,7 +115,8 @@ let make_any_provider name model base_url =
 let rebuild_session st =
   let provider = make_any_provider st.provider_name st.model st.base_url in
   st.provider <- provider;
-  st.session  <- Session.create ~tools:all_tools st.model provider
+  st.session  <- Session.create ~tools:(all_tools ()) st.model provider
+
 
 let on_token token =
   print_ansi (green token);
@@ -336,8 +349,9 @@ let repl net st =
 (* --- CLI Mode Implementations --- *)
 
 let cmd_complete net ~model ~provider_name ~base_url ~system prompt_text =
+  init_mcp ();
   let provider = make_any_provider provider_name model base_url in
-  let sess = Session.create ~tools:all_tools model provider in
+  let sess = Session.create ~tools:(all_tools ()) model provider in
   let sess = match system with Some s -> Session.set_system sess s | None -> sess in
   (try
     let (_sess, result) = Session.turn_stream net sess prompt_text ~on_token in
@@ -385,10 +399,11 @@ let system_arg =
   Arg.(value & opt (some string) default & info ["s"; "system"] ~docv:"PROMPT" ~doc)
 
 let run_repl model provider_name base_url system =
+  init_mcp ();
   Eio_main.run (fun env ->
     let net = env#net in
     let provider = make_any_provider provider_name model base_url in
-    let sess = Session.create ~tools:all_tools model provider in
+    let sess = Session.create ~tools:(all_tools ()) model provider in
     let sess = match system with Some s -> Session.set_system sess s | None -> sess in
     let st = {
       session      = sess;

@@ -18,7 +18,7 @@ find docs . -maxdepth 1 -name "*.md" -not -path "./_build/*" | while read -r fil
         echo "Processing $file..."
         
         # Use mmdc to render. mmdc will replace the blocks and create -1.svg, -2.svg, etc.
-        mmdc -i "$file" -o "$file"
+        mmdc -i "$file" -o "$file" --puppeteerConfigFile "$(dirname "$0")/../puppeteer-config.json"
         
         # Get the base name without extension
         base_path="${file%.md}"

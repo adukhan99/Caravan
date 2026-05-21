@@ -55,10 +55,10 @@ flowchart TB
     Config -.-> Agent
 
     %% Styling
-    classDef primary fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef secondary fill:#bbf,stroke:#333,stroke-width:1px;
-    classDef interface fill:#dfd,stroke:#333,stroke-width:1px;
-    classDef dsl fill:#ffd,stroke:#333,stroke-width:1px;
+    classDef primary fill:#e1effe,stroke:#0969da,stroke-width:2px,color:#24292f;
+    classDef secondary fill:#f3e8ff,stroke:#8250df,stroke-width:1px,color:#24292f;
+    classDef interface fill:#daebd1,stroke:#1a7f37,stroke-width:1px,color:#24292f;
+    classDef dsl fill:#fff8c5,stroke:#bf8700,stroke-width:1px,color:#24292f;
     
     class Agent primary;
     class Session,Memory,Parser secondary;

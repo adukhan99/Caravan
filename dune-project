@@ -44,6 +44,10 @@
    (>= 0.7))
   (eio-ssl
    (>= 0.3))
-  redis-sync)
+  redis-sync
+  (ppx_expect (and :with-test (>= 0.16.0)))
+  (ppx_inline_test (and :with-test (>= 0.16.0)))
+  ppx_let
+  ppx_yojson_conv)
  (tags
   ("llm" "orchestration" "ai" "ollama" "openai" "llama.cpp")))

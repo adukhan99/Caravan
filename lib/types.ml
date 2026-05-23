@@ -1,5 +1,7 @@
 (** Message and type definitions. *)
 
+open Ppx_yojson_conv_lib.Yojson_conv.Primitives
+
 type role =
   | System
   | User
@@ -25,9 +27,6 @@ let role_of_string s =
   match role_of_string_result s with
   | Ok r    -> r
   | Error e -> failwith e
-
-let ( >>= ) r f = Result.bind r f
-let ( >|= ) r f = Result.map f r
 
 type tool_call = {
   id   : string;
@@ -113,7 +112,6 @@ let chat_message_of_json_result json =
       else
         role_of_string_result role_str
     in
-    role_r >>= fun role ->
     let tool_calls_r =
       match json |> member "tool_calls" with
       | `Null  -> Ok None
@@ -124,7 +122,14 @@ let chat_message_of_json_result json =
         else Ok (Some (List.filter_map (function Ok tc -> Some tc | _ -> None) results))
       | _ -> Ok None
     in
-    tool_calls_r >|= fun tcs ->
+    let open struct
+      module Let_syntax = struct
+        let bind x ~f = Result.bind x f
+        let map x ~f = Result.map f x
+      end
+    end in
+    let%bind role = role_r in
+    let%map tcs = tool_calls_r in
     {
       role;
       content    = (match json |> member "content" with `String s -> s | `Null -> "" | _ -> "");
@@ -147,7 +152,7 @@ type usage = {
   completion_tokens : int;
   total_tokens      : int;
   total_duration    : float option;
-}
+} [@@deriving yojson]
 
 type 'a result_with_meta = {
   value        : 'a;
@@ -169,7 +174,7 @@ type gen_options = {
   max_tokens   : int option;
   stop         : string list;
   seed         : int option;
-}
+} [@@deriving yojson]
 
 let default_options = {
   temperature  = None;

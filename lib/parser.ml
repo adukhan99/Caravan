@@ -12,6 +12,16 @@ let and_then f p s = match p s with
 let (>|=) p f = map f p
 let (>>=) p f = and_then f p
 
+module Let_syntax = struct
+  let bind p ~f s = match p s with
+    | Error e -> Error e
+    | Ok v    -> f v s
+
+  let map p ~f s = match p s with
+    | Error e -> Error e
+    | Ok v    -> Ok (f v)
+end
+
 let return v _s = Ok v
 let fail msg _s = Error msg
 
@@ -22,15 +32,15 @@ let or_else p1 p2 s = match p1 s with
 let (<|>) = or_else
 
 let ap pf pa =
-  pf >>= fun f ->
-  pa >|= fun a ->
+  let%bind f = pf in
+  let%map a = pa in
   f a
 
 let (<*>) = ap
 
 let product pa pb =
-  pa >>= fun a ->
-  pb >|= fun b ->
+  let%bind a = pa in
+  let%map b = pb in
   (a, b)
 
 let string : string t = fun s -> return s s
@@ -42,16 +52,17 @@ let json : Yojson.Safe.t t = fun s ->
   with Yojson.Json_error msg -> fail ("JSON parse error: " ^ msg) s
 
 let json_field key : Yojson.Safe.t t =
-  json >>= fun j s ->
+  let%bind j = json in
   match Yojson.Safe.Util.member key j with
-  | `Null  -> fail (Printf.sprintf "Field '%s' not found in JSON" key) s
-  | v      -> return v s
+  | `Null  -> fail (Printf.sprintf "Field '%s' not found in JSON" key)
+  | v      -> return v
 
 let json_string_field key : string t =
-  json_field key >>= function
+  let%bind j = json_field key in
+  match j with
   | `String v -> return v
-  | other -> fun s -> fail (Printf.sprintf "Field '%s' is not a string: %s"
-                  key (Yojson.Safe.to_string other)) s
+  | other -> fail (Printf.sprintf "Field '%s' is not a string: %s"
+                  key (Yojson.Safe.to_string other))
 
 let list : string list t = fun s ->
   return (s
@@ -143,7 +154,8 @@ let extract_code ?lang : string t = fun s ->
      | None   -> return (String.trim s) s)
 
 let first_line : string t =
-  list >>= function
+  let%bind lines = list in
+  match lines with
   | [] -> return ""
   | h :: _ -> return h
 
@@ -159,11 +171,12 @@ let regex_capture ~pattern : string t = fun s ->
        with Not_found -> fail "No capture group in match" s)
 
 let json_array_strings : string list t =
-  json >>= function
-  | `List items ->
+  let%bind items = json in
+  match items with
+  | `List l ->
     return (List.filter_map (function
       | `String s -> Some s
-      | _ -> None) items)
+      | _ -> None) l)
   | _ -> fail "Expected a JSON array"
 
 let run p s = p s

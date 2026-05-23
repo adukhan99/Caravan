@@ -10,7 +10,9 @@
   re
   otoml
   fmt
-  redis-sync)
+  redis-sync
+  ppx_yojson_conv_lib)
+ (preprocess (pps ppx_let ppx_yojson_conv))
  (modules
   Config
   Types

@@ -238,3 +238,16 @@ end = struct
     { mem with running_sum }
 end
 
+module SummaryMemory : MEMORY with type t = Summary.t = struct
+  type t = Summary.t
+  let create () = Summary.create ()
+  let add = Summary.add
+  let get = Summary.get
+  let clear = Summary.clear
+  let length = Summary.length
+  let set_window = Summary.set_window
+  let to_json = Summary.to_json
+  let of_json = Summary.of_json
+end
+
+

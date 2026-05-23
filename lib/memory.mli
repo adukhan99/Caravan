@@ -56,3 +56,6 @@ module Hierarchical : sig
   val to_json     : t -> Yojson.Safe.t
   val of_json     : Yojson.Safe.t -> t
 end
+
+module SummaryMemory : MEMORY with type t = Summary.t
+

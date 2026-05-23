@@ -46,6 +46,7 @@ let slash_commands = [
   "/system [text]",   "Set or clear the system prompt";
   "/agent <task>",    "Start an autonomous agentic loop";
   "/memory <n>",      "Set context window (0 = max)";
+  "/summarise",       "Summarize history to slim context window";
   "/clear",           "Clear conversation history";
   "/history",         "Print conversation history";
   "/export [file]",   "Export session JSON to stdout or file";
@@ -213,6 +214,21 @@ let handle_slash_command net st line =
             (if n = 0 then "unlimited" else string_of_int n)))
         | None -> usage "/memory" "<n>")
      | _ -> usage "/memory" "<n>")
+
+  | ["/summarise"] | ["/summarize"] ->
+    let hist = Session.history st.session in
+    if hist = [] then
+      println_ansi (yellow "  ⚠ Conversation history is empty; nothing to summarize.")
+    else begin
+      println_ansi (bold (yellow "\n  Summarizing conversation history..."));
+      (try
+         let (new_sess, summary) = Session.summarise net st.session in
+         st.session <- new_sess;
+         println_ansi (bold (green "  ✓ Context slimmed successfully."));
+         println_ansi (cyan (Printf.sprintf "  [Summary]: %s" summary))
+       with exn ->
+         println_ansi (red (Printf.sprintf "  Error summarizing: %s" (Printexc.to_string exn))))
+    end
 
   | ["/clear"] ->
     st.session <- Session.clear st.session;

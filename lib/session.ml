@@ -168,6 +168,35 @@ let turn_stream net sess user_input ~on_token =
   let sess' = { sess with memory = Memory.Mem ((module M), M.add mem user) } in
   run_conversations_stream net sess' ~on_token
 
+let summarise net sess =
+  let hist = history sess in
+  if hist = [] then
+    (sess, "Conversation history is empty; nothing to summarize.")
+  else
+    let format_history msgs =
+      String.concat "\n"
+        (List.map (fun m ->
+           Printf.sprintf "[%s]: %s" (role_to_string m.role) m.content) msgs)
+    in
+    let prompt =
+      "Please provide a highly concise summary of the following conversation history. " ^
+      "Focus on preserving key details, facts, contexts, and instructions. " ^
+      "Write ONLY the plain-text summary, with no meta-commentary, introductory text, or headers.\n\n" ^
+      "Conversation History:\n" ^
+      format_history hist
+    in
+    let result = Provider.complete_packed net ~tools:[] sess.provider [user_msg prompt] in
+    let summary_content = String.trim result.value.content in
+    let new_mem_t =
+      let open Memory.Summary in
+      let mem = create ~max_messages:sess.cfg.memory_size () in
+      let mem_sum = compress ~complete:(fun _ -> summary_content) mem in
+      Memory.Mem ((module Memory.SummaryMemory), mem_sum)
+    in
+    let new_sess = { sess with memory = new_mem_t; turn_idx = 0 } in
+    (new_sess, summary_content)
+
+
 let export_json sess =
   let Memory.Mem ((module M), mem) = sess.memory in
   `Assoc [

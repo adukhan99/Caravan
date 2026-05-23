@@ -222,6 +222,32 @@ let test_kleisli_composition () =
   assert (composed 60 = Error "too big");
   ()
 
+let test_session_summarise net =
+  let module MockProvider : Provider.PROVIDER with type config = unit = struct
+    type config = unit
+    let name = "mock"
+    let complete _net _cfg ?tools:_ _msgs =
+      let reply = Types.assistant_msg "This is a summary." in
+      Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+    let stream _net _cfg ?tools:_ _msgs ~on_token =
+      on_token "This is a summary.";
+      let reply = Types.assistant_msg "This is a summary." in
+      Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+    let list_models _net _cfg = ["mock"]
+  end in
+  let provider = Provider.Provider ((module MockProvider), ()) in
+  let sess = Session.create ~tools:[] "mock" provider in
+  let sess = Session.add_messages sess [Types.user_msg "hello"; Types.assistant_msg "hi"] in
+  
+  let (sess', sum) = Session.summarise net sess in
+  assert (sum = "This is a summary.");
+  let hist = Session.history sess' in
+  assert (List.length hist = 1);
+  let msg = List.hd hist in
+  assert (msg.Types.role = Types.System);
+  assert (msg.Types.content = "[Conversation summary]: This is a summary.");
+  ()
+
 let run_tests () =
   Printf.printf "Running tests...\n";
   Eio_main.run (fun env ->
@@ -242,6 +268,7 @@ let run_tests () =
     test_formatter_profunctor ();
     test_renderers ();
     test_kleisli_composition ();
+    test_session_summarise env#net;
     Printf.printf "All tests passed.\n"
   )
 

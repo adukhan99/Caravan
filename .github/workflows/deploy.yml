@@ -4,19 +4,22 @@ on:
   push:
     branches:
       - main
-    paths:
-      - 'docs/**'
-      - 'lib/**'
-      - 'bin/**'
-      - 'README.md'
-      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -59,9 +62,11 @@ jobs:
             cp -r _build/default/_doc/_html/* deploy/api/
           fi
 
-      - name: Deploy to GitHub Pages
-        uses: JamesIves/github-pages-deploy-action@v4
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          folder: deploy
-          branch: gh-pages
-          commit_message: "docs: update rendered diagrams and api docs"
+          path: './deploy'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

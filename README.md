@@ -91,13 +91,13 @@ Inside the REPL, use these commands to control the session:
 
 Caravan can be configured via a TOML file at `~/.caravan/config.toml` or via environment variables.
 
-See the [Configuration Guide](docs/configuration.md) for a full list of available options and an [example_config.toml](example_config.toml).
+See the [Configuration Guide](docs/configuration.md) and the annotated [example_config.toml](docs/example_config.toml) for details on all available settings.
 
 ### Quick Setup
 
 ```bash
 mkdir -p ~/.caravan
-cp example_config.toml ~/.caravan/config.toml
+cp docs/example_config.toml ~/.caravan/config.toml
 # Edit the file with your API keys and preferred model
 ```
 

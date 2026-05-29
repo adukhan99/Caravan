@@ -1,0 +1,43 @@
+# Caravan Configuration Example
+# Save this file to ~/.caravan/config.toml to customize defaults.
+
+# --- Provider Settings ---
+# Default LLM provider ("ollama", "openai", "llama_cpp")
+provider = "ollama"
+
+# Default model name
+model = "llama3.2"
+
+# Base URL for the provider's API (e.g. "http://127.0.0.1:11434/v1" or "https://api.openai.com/v1")
+base_url = "http://127.0.0.1:11434/v1"
+
+# API key for OpenAI-compatible providers
+openai_api_key = "sk-proj-..."
+
+# --- Agent Settings ---
+# Maximum turns an agent can perform per task (default: 10)
+max_turns = 15
+
+# Default system prompt for interactive sessions
+system = "You are a helpful OCaml programming assistant."
+
+# Strict mode for the bash tool: 0 = Off (no restrictions), 1 = Strict (single-command), 2 = Hidden (disabled)
+strict_mode = 1
+
+# --- Tool Settings ---
+# Brave Search API Key for the `web_search` tool
+search_api_key = "bs-..."
+
+# --- Model Context Protocol (MCP) Servers ---
+# Define external tool integrations using [[mcp.servers]]
+[[mcp.servers]]
+name = "filesystem"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/workspace"]
+
+[[mcp.servers]]
+name = "postgres-db"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-postgres", "postgresql://localhost/mydb"]

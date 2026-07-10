@@ -194,7 +194,8 @@ module Ollama = struct
               in
               let reply = make_message ?tool_calls Assistant full in
               result := Some (wrap_result ~raw_response:full ~model:cfg.model
-                ~provider:"ollama" ?finish_reason:finish ?usage reply)
+                ~provider:"ollama" ?finish_reason:finish ?usage reply);
+              raise End_of_file
             end
           with exn ->
             Printf.eprintf "[Ollama Stream Parse Error]: %s\nLine: %s\n%!"

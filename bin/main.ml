@@ -147,7 +147,7 @@ let update_int_opt st cmd name setter = function
 
 (* --- Slash Command Handling --- *)
 
-let handle_slash_command net st line =
+let handle_slash_command net clock st line =
   let parts = String.split_on_char ' ' (String.trim line) |> List.filter (fun s -> s <> "") in
   match parts with
   | [] -> ()
@@ -165,7 +165,13 @@ let handle_slash_command net st line =
     else begin
       println_ansi (bold (yellow (Printf.sprintf "\n  Starting agentic loop for: %s" task)));
       (try
-        let result = Agent.run_stream net st.session task ~on_token in
+        let stream_enabled = Config.get_stream () in
+        let result =
+          if stream_enabled then
+            Agent.run_stream net clock st.session task ~on_token
+          else
+            Agent.run net clock st.session task
+        in
         match result with
         | Ok (new_sess, res) ->
           st.session <- new_sess;
@@ -222,7 +228,7 @@ let handle_slash_command net st line =
     else begin
       println_ansi (bold (yellow "\n  Summarizing conversation history..."));
       (try
-         let (new_sess, summary) = Session.summarise net st.session in
+         let (new_sess, summary) = Session.summarise net clock st.session in
          st.session <- new_sess;
          println_ansi (bold (green "  ✓ Context slimmed successfully."));
          println_ansi (cyan (Printf.sprintf "  [Summary]: %s" summary))
@@ -289,6 +295,8 @@ let handle_slash_command net st line =
     p "URL" (Option.value ~default:"(default)" st.base_url);
     p "Memory" (string_of_int cfg.memory_size);
     p "System" (match cfg.system with Some s -> Printf.sprintf "\"%s...\"" (String.sub s 0 (min (String.length s) 30)) | None -> "(none)");
+    p "Streaming" (string_of_bool (Config.get_stream ()));
+    p "Spinner" (string_of_bool (Config.get_spinner_enabled ()));
     println_ansi (bold (dim "  Generation Options:"));
     let po n = function Some v -> println_ansi (Printf.sprintf "    %-13s %s" (cyan (n ^ ":")) (white v)) | None -> () in
     po "Temp" (Option.map (Printf.sprintf "%.2f") opts.temperature);
@@ -315,7 +323,7 @@ let handle_slash_command net st line =
 
 (* --- REPL Loop --- *)
 
-let repl net st =
+let repl net clock st =
   let prompt () =
     if is_tty then
       print_ansi (Printf.sprintf "\n%s %s %s "
@@ -337,19 +345,28 @@ let repl net st =
     in
     if line = "" then loop ()
     else if String.length line > 0 && line.[0] = '/' then begin
-      handle_slash_command net st line;
+      handle_slash_command net clock st line;
       loop ()
     end else begin
-      if is_tty then
+      let verbose = Config.get_spinner_verbose () in
+      if is_tty && verbose then
         println_ansi (Printf.sprintf "\n%s" (bold (green "Assistant:")));
       (try
-        let (new_sess, result) = Session.turn_stream net st.session line ~on_token in
+        let stream_enabled = Config.get_stream () in
+        let (new_sess, result) =
+          if stream_enabled then
+            Session.turn_stream net clock st.session line ~on_token
+          else
+            Session.turn net clock st.session line
+        in
         st.session <- new_sess;
+        if not stream_enabled then
+          print_ansi (green result.value.content);
         if is_tty then begin
           print_newline ();
           println_ansi (dim (Monitor.format_usage result))
         end;
-        if not is_tty then print_endline result.value.content
+        if not is_tty && not stream_enabled then print_endline result.value.content
       with exn ->
         if is_tty then print_newline ();
         let msg = match exn with
@@ -364,13 +381,21 @@ let repl net st =
 
 (* --- CLI Mode Implementations --- *)
 
-let cmd_complete net ~model ~provider_name ~base_url ~system prompt_text =
+let cmd_complete net clock ~model ~provider_name ~base_url ~system prompt_text =
   init_mcp ();
   let provider = make_any_provider provider_name model base_url in
   let sess = Session.create ~tools:(all_tools ()) model provider in
   let sess = match system with Some s -> Session.set_system sess s | None -> sess in
   (try
-    let (_sess, result) = Session.turn_stream net sess prompt_text ~on_token in
+    let stream_enabled = Config.get_stream () in
+    let (_sess, result) =
+      if stream_enabled then
+        Session.turn_stream net clock sess prompt_text ~on_token
+      else
+        Session.turn net clock sess prompt_text
+    in
+    if not stream_enabled then
+      print_ansi (green result.value.content);
     print_newline ();
     if is_tty then println_ansi (dim (Monitor.format_usage result))
   with exn ->
@@ -440,7 +465,7 @@ let run_repl model provider_name base_url system =
       println_ansi (dim "  Type a message and press Enter. Use /help for commands.");
       print_newline ()
     end;
-    repl net st
+    repl net env#clock st
   )
 
 let repl_cmd =
@@ -455,7 +480,7 @@ let complete_cmd =
   in
   let run model provider_name base_url system prompt =
     Eio_main.run (fun env ->
-      cmd_complete env#net ~model ~provider_name ~base_url ~system prompt
+      cmd_complete env#net env#clock ~model ~provider_name ~base_url ~system prompt
     )
   in
   let doc = "Send a single prompt and print the response." in

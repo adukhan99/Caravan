@@ -119,3 +119,31 @@ let get_mcp_servers () =
       ) elements
     with _ -> []
 
+let get_stream () =
+  get_bool_opt (Some "CARAVAN_STREAM") "stream" |> Option.value ~default:true
+
+let get_spinner_enabled () =
+  get_bool_opt (Some "CARAVAN_SPINNER") "spinner.enabled" |> Option.value ~default:true
+
+let get_spinner_verbose () =
+  get_bool_opt (Some "CARAVAN_SPINNER_VERBOSE") "spinner.verbose" |> Option.value ~default:false
+
+let get_spinner_verb tool_name =
+  match Lazy.force toml_ast with
+  | None -> None
+  | Some ast ->
+    try Some (Otoml.find ast Otoml.get_string ["spinner"; tool_name])
+    with _ -> None
+
+let get_verb tool_name =
+  match get_spinner_verb tool_name with
+  | Some v -> v
+  | None ->
+    match tool_name with
+    | "thinking" -> "Thinking"
+    | "bash" -> "Running command"
+    | "web_search" -> "Searching the web"
+    | "fetch" -> "Fetching URL"
+    | other -> "Executing " ^ other
+
+

@@ -65,11 +65,11 @@ let llm_stream (net : _ Eio.Net.t) (provider : Provider.packed_provider)
 let parse (p : 'a Parser.t) : string -> ('a, string) result =
   fun s -> p s
 
-let agent ?config (net : _ Eio.Net.t) (provider : Provider.packed_provider) (tools : Tool.packed_tool list)
+let agent ?config (net : _ Eio.Net.t) (clock : _ Eio.Time.clock) (provider : Provider.packed_provider) (tools : Tool.packed_tool list)
   : string -> (Session.t * chat_message result_with_meta, string) result =
   fun task ->
     let sess = Session.create ~tools (Provider.name_of_packed provider) provider in
-    Agent.run ?config net sess task
+    Agent.run ?config net clock sess task
 
 let with_memory
     (type m)

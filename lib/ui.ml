@@ -105,7 +105,7 @@ let println_ansi s = print_endline s
 let print_banner () =
   if is_tty then begin
     println_ansi (cyan "╔═════════════════════════════════════════════════╗");
-    println_ansi (cyan "║  " ^ bold (white "Caravan") ^ white "  v0.1  —  Typed LLM Orchestration     " ^ cyan "║");
+    println_ansi (cyan "║  "  ^ bold (white "Caravan") ^ white "   v0.1  —  Typed LLM Orchestration     " ^ cyan "║");
     println_ansi (cyan "╚═════════════════════════════════════════════════╝");
     print_newline ()
   end
@@ -125,3 +125,44 @@ module MakeTheme (R : RENDERER) = struct
   let title s = R.render_styled (Document.Foreground Document.Cyan) (R.render_styled Document.Bold (R.render_text s))
   let success s = R.render_styled (Document.Foreground Document.Green) (R.render_text s)
 end
+
+let with_spinner clock verb enabled fn =
+  if not enabled then fn ()
+  else
+    let spinner_frames = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧"; "⠇"; "⠏" |] in
+    let spinner_colors = [| cyan; magenta; yellow; green; blue |] in
+    let run_spinner () =
+      Fun.protect
+        ~finally:(fun () -> Printf.eprintf "\r\027[K%!")
+        (fun () ->
+           let rec loop idx =
+             let frame = spinner_frames.(idx mod Array.length spinner_frames) in
+             let color_fn = spinner_colors.(idx mod Array.length spinner_colors) in
+             Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
+             Eio.Time.sleep clock 0.08;
+             loop (idx + 1)
+           in
+           loop 0)
+    in
+    Eio.Fiber.first run_spinner fn
+
+let run_spinner_until_promise sw clock verb enabled promise =
+  if enabled then
+    Eio.Fiber.fork ~sw (fun () ->
+      let spinner_frames = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧"; "⠇"; "⠏" |] in
+      let spinner_colors = [| cyan; green; blue |] in
+      let rec loop idx =
+        if Eio.Promise.is_resolved promise then
+          Printf.eprintf "\r\027[K%!"
+        else begin
+          let frame = spinner_frames.(idx mod Array.length spinner_frames) in
+          let color_fn = spinner_colors.(idx mod Array.length spinner_colors) in
+          Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
+          Eio.Time.sleep clock 0.08;
+          loop (idx + 1)
+        end
+      in
+      loop 0
+    )
+
+

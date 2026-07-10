@@ -35,8 +35,8 @@ let run_generic ?(config = default_config) run_fn sess task =
   let sess_with_task = Prompt.(exec_in_session (user task) sess) in
   loop sess_with_task 0
 
-let run ?(config = default_config) net sess task =
-  run_generic ~config (Session.run_conversations net) sess task
+let run ?(config = default_config) net clock sess task =
+  run_generic ~config (Session.run_conversations net clock) sess task
 
-let run_stream ?(config = default_config) net sess task ~on_token =
-  run_generic ~config (Session.run_conversations_stream net ~on_token) sess task
+let run_stream ?(config = default_config) net clock sess task ~on_token =
+  run_generic ~config (Session.run_conversations_stream net clock ~on_token) sess task

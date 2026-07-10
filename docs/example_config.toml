@@ -24,6 +24,24 @@ system = "You are a helpful OCaml programming assistant."
 # Strict mode for the bash tool: 0 = Off (no restrictions), 1 = Strict (single-command), 2 = Hidden (disabled)
 strict_mode = 1
 
+# Toggle LLM streaming output in interactive chats and agent turns (default: true)
+stream = true
+
+# --- TUI Spinner & Progress indicators ---
+[spinner]
+# Enable/disable spinner/progress indicator during long-running tool execution or thinking (default: true)
+enabled = true
+
+# Show verbose logging (legacy style with [Tool] and [Tool Result]) instead of clean live spinner (default: false)
+verbose = false
+
+# Define custom verbs (verbs shown during spinner run) for specific tools/actions
+thinking = "Thinking"
+bash = "Running command"
+web_search = "Searching the web"
+fetch = "Fetching URL"
+
+
 # --- Tool Settings ---
 # Brave Search API Key for the `web_search` tool
 search_api_key = "bs-..."

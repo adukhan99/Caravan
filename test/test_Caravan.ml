@@ -244,7 +244,7 @@ let%expect_test "session_summarise" =
     let sess = Session.create ~tools:[] "mock" provider in
     let sess = Session.add_messages sess [Types.user_msg "hello"; Types.assistant_msg "hi"] in
     
-    let (sess', sum) = Session.summarise env#net sess in
+    let (sess', sum) = Session.summarise env#net env#clock sess in
     print_endline sum;
     let hist = Session.history sess' in
     Format.printf "History length: %d\n" (List.length hist);
@@ -257,7 +257,8 @@ let%expect_test "session_summarise" =
     Format.printf "Content: %s\n" msg.Types.content
   );
   [%expect {|
-    This is a summary.
+    ⠋ Summarizing...[KThis is a summary.
     History length: 1
     Role: System
-    Content: [Conversation summary]: This is a summary. |}]
+    Content: [Conversation summary]: This is a summary.
+    |}]

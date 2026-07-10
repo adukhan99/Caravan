@@ -12,7 +12,8 @@
   fmt
   redis-sync
   ppx_yojson_conv_lib)
- (preprocess (pps ppx_let ppx_yojson_conv))
+ (preprocess
+  (pps ppx_let ppx_yojson_conv))
  (modules
   Config
   Types
@@ -29,4 +30,5 @@
   Template
   Agent
   Chain
-  Mcp))
+  Mcp
+  Redis_store))

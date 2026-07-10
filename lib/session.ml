@@ -87,7 +87,8 @@ let history_for_llm sess =
      | { role = System; _ } :: _ -> hist
      | rest -> sm :: rest)
 
-let execute_tool_calls _net sess tcs =
+let execute_tool_calls net clock sess tcs =
+  let verbose = Config.get_spinner_verbose () in
   List.map (fun tc ->
     match List.find_opt (fun t -> Tool.name_of_packed t = tc.name) sess.tools with
     | None ->
@@ -95,12 +96,18 @@ let execute_tool_calls _net sess tcs =
       Printf.eprintf "%s: %s → %s\n%!" (Ui.magenta "[Tool]") tc.name (Ui.red "NOT FOUND");
       tool_msg tc.id msg
     | Some packed ->
-      Printf.eprintf "%s: %s(%s)\n%!" (Ui.magenta "[Tool]") (Ui.bold tc.name) (Ui.dim tc.args);
-      let output_str = Tool.dispatch packed tc.args in
-      if tc.name = "finish" then
-        Ui.println_ansi (Ui.bold (Ui.green output_str))
-      else
-        Printf.eprintf "%s: %s\n%!" (Ui.dim "[Tool Result]") (Ui.dim output_str);
+      if verbose then
+        Printf.eprintf "%s: %s(%s)\n%!" (Ui.magenta "[Tool]") (Ui.bold tc.name) (Ui.dim tc.args);
+      let verb = Config.get_verb tc.name in
+      let enabled = Config.get_spinner_enabled () in
+      let output_str = Ui.with_spinner clock verb enabled (fun () -> Tool.dispatch packed tc.args) in
+      if verbose then begin
+        if tc.name = "finish" then
+          Ui.println_ansi (Ui.bold (Ui.green output_str))
+        else
+          Printf.eprintf "%s: %s\n%!" (Ui.dim "[Tool Result]") (Ui.dim output_str)
+      end else if tc.name = "finish" then
+        Ui.println_ansi (Ui.bold (Ui.green output_str));
       tool_msg tc.id output_str
   ) tcs
 
@@ -108,13 +115,13 @@ type step_outcome =
   | Continue of t
   | Done     of t * string
 
-let run_turn_step net sess (reply : chat_message) =
+let run_turn_step net clock sess (reply : chat_message) =
   let Memory.Mem ((module M), mem) = sess.memory in
   let final_memory = Memory.Mem ((module M), M.add mem reply) in
   let new_sess = { sess with memory = final_memory; turn_idx = sess.turn_idx + 1 } in
   match reply.tool_calls with
   | Some tcs when tcs <> [] ->
-    let tool_responses = execute_tool_calls net new_sess tcs in
+    let tool_responses = execute_tool_calls net clock new_sess tcs in
     let memory_with_tools =
       List.fold_left (fun (Memory.Mem ((module M2), m2)) r -> Memory.Mem ((module M2), M2.add m2 r)) new_sess.memory tool_responses
     in
@@ -138,37 +145,63 @@ let run_turn_step net sess (reply : chat_message) =
   | _ ->
     Done (new_sess, reply.content)
 
-let rec run_conversations net sess =
-  let result = Provider.complete_packed net ~tools:sess.tools sess.provider (history_for_llm sess) in
-  let outcome = run_turn_step net sess result.value in
+let rec run_conversations net clock sess =
+  let verb = Config.get_verb "thinking" in
+  let enabled = Config.get_spinner_enabled () in
+  let verbose = Config.get_spinner_verbose () in
+  let result = Ui.with_spinner clock verb enabled (fun () ->
+    Provider.complete_packed net ~tools:sess.tools sess.provider (history_for_llm sess)
+  ) in
+  if not verbose then
+    Ui.println_ansi (Printf.sprintf "\n%s" (Ui.bold (Ui.green "Assistant:")));
+  let outcome = run_turn_step net clock sess result.value in
   match outcome with
-  | Continue sess' -> run_conversations net sess'
+  | Continue sess' -> run_conversations net clock sess'
   | Done (sess', content) ->
       (sess', { result with value = { result.value with content }; turn_count = Some sess'.turn_idx })
 
-let turn net sess user_input =
+let turn net clock sess user_input =
   let user = user_msg user_input in
   let Memory.Mem ((module M), mem) = sess.memory in
   let sess' = { sess with memory = Memory.Mem ((module M), M.add mem user) } in
-  run_conversations net sess'
+  run_conversations net clock sess'
 
-let rec run_conversations_stream net sess ~on_token =
+let rec run_conversations_stream net clock sess ~on_token =
+  let verb = Config.get_verb "thinking" in
+  let enabled = Config.get_spinner_enabled () in
+  let verbose = Config.get_spinner_verbose () in
   let result_with_meta =
-    Provider.stream_packed net ~tools:sess.tools ~on_token sess.provider (history_for_llm sess)
+    Eio.Switch.run (fun sw ->
+      let promise, resolver = Eio.Promise.create () in
+      Ui.run_spinner_until_promise sw clock verb enabled promise;
+      let first_token = ref true in
+      let wrapped_on_token token =
+        if !first_token then begin
+          first_token := false;
+          Eio.Promise.resolve resolver ();
+          if not verbose then
+            Ui.println_ansi (Printf.sprintf "\n%s" (Ui.bold (Ui.green "Assistant:")));
+        end;
+        on_token token
+      in
+      Fun.protect
+        ~finally:(fun () -> if not (Eio.Promise.is_resolved promise) then Eio.Promise.resolve resolver ())
+        (fun () -> Provider.stream_packed net ~tools:sess.tools ~on_token:wrapped_on_token sess.provider (history_for_llm sess))
+    )
   in
-  let outcome = run_turn_step net sess result_with_meta.value in
+  let outcome = run_turn_step net clock sess result_with_meta.value in
   match outcome with
-  | Continue sess' -> run_conversations_stream net sess' ~on_token
+  | Continue sess' -> run_conversations_stream net clock sess' ~on_token
   | Done (sess', content) ->
       (sess', { result_with_meta with value = { result_with_meta.value with content }; turn_count = Some sess'.turn_idx })
 
-let turn_stream net sess user_input ~on_token =
+let turn_stream net clock sess user_input ~on_token =
   let user = user_msg user_input in
   let Memory.Mem ((module M), mem) = sess.memory in
   let sess' = { sess with memory = Memory.Mem ((module M), M.add mem user) } in
-  run_conversations_stream net sess' ~on_token
+  run_conversations_stream net clock sess' ~on_token
 
-let summarise net sess =
+let summarise net clock sess =
   let hist = history sess in
   if hist = [] then
     (sess, "Conversation history is empty; nothing to summarize.")
@@ -185,7 +218,11 @@ let summarise net sess =
       "Conversation History:\n" ^
       format_history hist
     in
-    let result = Provider.complete_packed net ~tools:[] sess.provider [user_msg prompt] in
+    let verb = "Summarizing" in
+    let enabled = Config.get_spinner_enabled () in
+    let result = Ui.with_spinner clock verb enabled (fun () ->
+      Provider.complete_packed net ~tools:[] sess.provider [user_msg prompt]
+    ) in
     let summary_content = String.trim result.value.content in
     let new_mem_t =
       let open Memory.Summary in

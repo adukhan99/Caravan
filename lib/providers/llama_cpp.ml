@@ -164,7 +164,8 @@ module Llama_cpp = struct
             in
             let reply = make_message ?tool_calls Assistant full in
             result_ref := Some (wrap_result ~raw_response:full ~model:cfg.model
-              ~provider:"llama_cpp" ?usage:(!usage_ref) reply)
+              ~provider:"llama_cpp" ?usage:(!usage_ref) reply);
+            raise End_of_file
           end else begin
             (try
               let json = Yojson.Safe.from_string data in

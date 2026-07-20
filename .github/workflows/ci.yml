@@ -13,6 +13,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev libgmp-dev pkg-config
+
       - name: Setup OCaml
         uses: ocaml/setup-ocaml@v3
         with:

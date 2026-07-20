@@ -99,7 +99,7 @@ let execute_tool_calls net clock sess tcs =
     | Some packed ->
       if verbose then
         Printf.eprintf "%s: %s(%s)\n%!" (Ui.magenta "[Tool]") (Ui.bold tc.name) (Ui.dim tc.args);
-      let verb = Config.get_verb tc.name in
+      let verb = Config.pick_verb (Config.get_verbs tc.name) in
       let enabled = Config.get_spinner_enabled () in
       let output_str = Ui.with_spinner clock verb enabled (fun () -> Tool.dispatch packed tc.args) in
       if verbose then begin
@@ -147,7 +147,7 @@ let run_turn_step net clock sess (reply : chat_message) =
     Done (new_sess, reply.content)
 
 let rec run_conversations net clock sess =
-  let verb = Config.get_verb "thinking" in
+  let verb = Config.pick_verb (Config.get_verbs "thinking") in
   let enabled = Config.get_spinner_enabled () in
   let verbose = Config.get_spinner_verbose () in
   let result = Ui.with_spinner clock verb enabled (fun () ->
@@ -168,7 +168,7 @@ let turn net clock sess user_input =
   run_conversations net clock sess'
 
 let rec run_conversations_stream net clock sess ~on_token =
-  let verb = Config.get_verb "thinking" in
+  let verb = Config.pick_verb (Config.get_verbs "thinking") in
   let enabled = Config.get_spinner_enabled () in
   let verbose = Config.get_spinner_verbose () in
   let result_with_meta =
@@ -219,7 +219,7 @@ let summarise net clock sess =
       "Conversation History:\n" ^
       format_history hist
     in
-    let verb = "Summarizing" in
+    let verb = Config.pick_verb (Config.get_verbs "summarizing") in
     let enabled = Config.get_spinner_enabled () in
     let result = Ui.with_spinner clock verb enabled (fun () ->
       Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:[] sess.provider [user_msg prompt]

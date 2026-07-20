@@ -126,43 +126,116 @@ module MakeTheme (R : RENDERER) = struct
   let success s = R.render_styled (Document.Foreground Document.Green) (R.render_text s)
 end
 
+(* ── Spinner ──────────────────────────────────────────────────────────────── *)
+
+module Spinner = struct
+  (** Braille arc — the classic ten-frame dot sweep. *)
+  let braille = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧"; "⠇"; "⠏" |]
+
+  type config = {
+    frames   : string array;
+    colors   : (string -> string) array;
+    interval : float;  (** seconds per frame *)
+  }
+
+  (** OCaml amber + warm tones — used while the LLM is thinking. *)
+  let thinking = {
+    frames   = braille;
+    colors   = [| yellow; (fun s -> style_doc (Document.Foreground Document.Red) s);
+                  magenta; cyan; yellow |];
+    interval = 0.08;
+  }
+
+  (** Caravan teal/cyan palette — used while a tool is executing. *)
+  let tool = {
+    frames   = braille;
+    colors   = [| cyan; blue; green; cyan; blue |];
+    interval = 0.07;
+  }
+
+  (** Purple / magenta — used during context summarisation. *)
+  let summarize = {
+    frames   = braille;
+    colors   = [| magenta; blue; cyan; magenta; blue |];
+    interval = 0.09;
+  }
+
+  (** Green / teal — used for network fetches. *)
+  let fetch = {
+    frames   = braille;
+    colors   = [| green; cyan; blue; green; cyan |];
+    interval = 0.08;
+  }
+
+  (** Yellow / white — used for web searches. *)
+  let search = {
+    frames   = braille;
+    colors   = [| yellow; white; cyan; yellow; white |];
+    interval = 0.08;
+  }
+
+  (** Neutral fallback for unknown tools. *)
+  let default = {
+    frames   = braille;
+    colors   = [| cyan; magenta; yellow; green; blue |];
+    interval = 0.08;
+  }
+
+  (** Select a preset by the tool/context name forwarded from Config. *)
+  let of_verb verb =
+    let lv = String.lowercase_ascii verb in
+    if String.length lv >= 7 && String.sub lv 0 7 = "thinkin" then thinking
+    else if String.length lv >= 5 && String.sub lv 0 5 = "summa"  then summarize
+    else if String.length lv >= 5 && String.sub lv 0 5 = "fetch"  then fetch
+    else if String.length lv >= 6 && String.sub lv 0 6 = "search" then search
+    else if String.length lv >= 7 && String.sub lv 0 7 = "running" then tool
+    else if String.length lv >= 7 && String.sub lv 0 7 = "executi" then tool
+    else default
+end
+
+(** Infinite braille render loop — intended to be raced via [Fiber.first].
+    Eio's cancellation will interrupt [sleep] and [Fun.protect] clears the line. *)
+let spinner_loop clock cfg verb =
+  Fun.protect
+    ~finally:(fun () -> Printf.eprintf "\r\027[K%!")
+    (fun () ->
+       let rec loop idx =
+         let frame    = cfg.Spinner.frames.(idx mod Array.length cfg.Spinner.frames) in
+         let color_fn = cfg.Spinner.colors.(idx mod Array.length cfg.Spinner.colors) in
+         Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
+         Eio.Time.sleep clock cfg.Spinner.interval;
+         loop (idx + 1)
+       in
+       loop 0)
+
+(** Poll loop — checks [stop] every frame; exits cleanly when it returns [true]. *)
+let spinner_poll_loop clock cfg verb stop =
+  Fun.protect
+    ~finally:(fun () -> Printf.eprintf "\r\027[K%!")
+    (fun () ->
+       let rec loop idx =
+         if stop () then ()
+         else begin
+           let frame    = cfg.Spinner.frames.(idx mod Array.length cfg.Spinner.frames) in
+           let color_fn = cfg.Spinner.colors.(idx mod Array.length cfg.Spinner.colors) in
+           Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
+           Eio.Time.sleep clock cfg.Spinner.interval;
+           loop (idx + 1)
+         end
+       in
+       loop 0)
+
+(** Run [fn] while showing a spinner; the spinner is cancelled when [fn] returns. *)
 let with_spinner clock verb enabled fn =
   if not enabled then fn ()
   else
-    let spinner_frames = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧"; "⠇"; "⠏" |] in
-    let spinner_colors = [| cyan; magenta; yellow; green; blue |] in
-    let run_spinner () =
-      Fun.protect
-        ~finally:(fun () -> Printf.eprintf "\r\027[K%!")
-        (fun () ->
-           let rec loop idx =
-             let frame = spinner_frames.(idx mod Array.length spinner_frames) in
-             let color_fn = spinner_colors.(idx mod Array.length spinner_colors) in
-             Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
-             Eio.Time.sleep clock 0.08;
-             loop (idx + 1)
-           in
-           loop 0)
-    in
-    Eio.Fiber.first run_spinner fn
+    let cfg = Spinner.of_verb verb in
+    Eio.Fiber.first (fun () -> spinner_loop clock cfg verb) fn
 
+(** Fork a spinner fiber that watches an Eio promise and stops when it resolves. *)
 let run_spinner_until_promise sw clock verb enabled promise =
   if enabled then
     Eio.Fiber.fork ~sw (fun () ->
-      let spinner_frames = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧"; "⠇"; "⠏" |] in
-      let spinner_colors = [| cyan; green; blue |] in
-      let rec loop idx =
-        if Eio.Promise.is_resolved promise then
-          Printf.eprintf "\r\027[K%!"
-        else begin
-          let frame = spinner_frames.(idx mod Array.length spinner_frames) in
-          let color_fn = spinner_colors.(idx mod Array.length spinner_colors) in
-          Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
-          Eio.Time.sleep clock 0.08;
-          loop (idx + 1)
-        end
-      in
-      loop 0
+      let cfg = Spinner.of_verb verb in
+      spinner_poll_loop clock cfg verb (fun () -> Eio.Promise.is_resolved promise)
     )
-
-

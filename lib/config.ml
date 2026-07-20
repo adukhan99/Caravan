@@ -128,22 +128,30 @@ let get_spinner_enabled () =
 let get_spinner_verbose () =
   get_bool_opt (Some "CARAVAN_SPINNER_VERBOSE") "spinner.verbose" |> Option.value ~default:false
 
-let get_spinner_verb tool_name =
+(** Read the TOML [spinner.<tool>] key as a string or array of strings. *)
+let get_spinner_verbs tool_name =
   match Lazy.force toml_ast with
   | None -> None
   | Some ast ->
-    try Some (Otoml.find ast Otoml.get_string ["spinner"; tool_name])
-    with _ -> None
+    (* Try array first, then fall back to plain string. *)
+    (try
+       let arr = Otoml.find ast (Otoml.get_array Otoml.get_string) ["spinner"; tool_name] in
+       if arr = [] then None else Some arr
+     with _ ->
+       try Some [Otoml.find ast Otoml.get_string ["spinner"; tool_name]]
+       with _ -> None)
 
-let get_verb tool_name =
-  match get_spinner_verb tool_name with
-  | Some v -> v
-  | None ->
-    match tool_name with
-    | "thinking" -> "Thinking"
-    | "bash" -> "Running command"
-    | "web_search" -> "Searching the web"
-    | "fetch" -> "Fetching URL"
-    | other -> "Executing " ^ other
+(** Return the list of verbs for [tool_name].
+    TOML overrides take priority; built-in defaults are lists so every
+    tool can have several synonyms picked randomly at call time. *)
+let get_verbs tool_name =
+  match get_spinner_verbs tool_name with
+  | Some vs -> vs
+  | None    -> ["Running " ^ tool_name]
 
+(** Pick a verb at random from a list. *)
+let pick_verb = function
+  | []  -> "Working"
+  | [v] -> v
+  | vs  -> List.nth vs (Random.int (List.length vs))
 

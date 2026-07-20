@@ -67,6 +67,7 @@ let with_provider sess provider =
   { sess with provider }
 
 let config sess = sess.cfg
+let provider sess = sess.provider
 let tools sess = sess.tools
 
 let with_model sess model =

@@ -21,6 +21,7 @@ val add_messages : t -> chat_message list -> t
 val with_provider : t -> Provider.packed_provider -> t
 val tools : t -> Tool.packed_tool list
 val config : t -> config
+val provider : t -> Provider.packed_provider
 val with_model : t -> string -> t
 
 val history : t -> chat_message list

@@ -1,4 +1,4 @@
-(** MCP client and packed tool registry. *)
+(** MCP client and packed tool registry with abstract transport engines (Pure Eio / Unix / SSE). *)
 
 open Types
 open Tool
@@ -11,9 +11,9 @@ type mcp_tool_def = {
 
 type mcp_client = {
   name : string;
-  in_chan : in_channel;
-  out_chan : out_channel;
-  err_chan : in_channel;
+  write_line : string -> unit;
+  read_line : unit -> string option;
+  close : unit -> unit;
   mutable next_id : int;
   mutex : Mutex.t;
 }
@@ -24,28 +24,23 @@ type registry = {
 
 let global_registry = { clients = [] }
 
-let read_line_opt ic =
-  try Some (input_line ic)
-  with _ -> None
-
-let rec read_response_matching ic expected_id =
-  match read_line_opt ic with
+let rec read_response_matching client expected_id =
+  match client.read_line () with
   | None -> Error "Connection closed"
   | Some line ->
     if String.trim line = "" then
-      read_response_matching ic expected_id
+      read_response_matching client expected_id
     else
       match Yojson.Safe.from_string line with
+      | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
       | exception _ ->
-        (* Print non-JSON lines as debug messages *)
         Printf.eprintf "[MCP stdout debug]: %s\n%!" line;
-        read_response_matching ic expected_id
+        read_response_matching client expected_id
       | json ->
         let open Yojson.Safe.Util in
         match json |> member "id" with
         | `Int id when id = expected_id -> Ok json
         | _ ->
-          (* Log incoming notification *)
           (match json |> member "method" |> to_string_option with
            | Some "notifications/message"
            | Some "notifications/log" ->
@@ -54,7 +49,7 @@ let rec read_response_matching ic expected_id =
              let level = params |> member "level" |> to_string_option |> Option.value ~default:"info" in
              Printf.eprintf "[MCP Log %s]: %s\n%!" level text
            | _ -> ());
-          read_response_matching ic expected_id
+          read_response_matching client expected_id
 
 let make_request id method_name params =
   let assoc = [
@@ -86,63 +81,89 @@ let send_request client method_name params =
   let id = client.next_id in
   client.next_id <- client.next_id + 1;
   let req = make_request id method_name params in
-  let req_str = Yojson.Safe.to_string req in
+  let req_str = Yojson.Safe.to_string req ^ "\n" in
   try
-    output_string client.out_chan (req_str ^ "\n");
-    flush client.out_chan;
-    let res = read_response_matching client.in_chan id in
+    client.write_line req_str;
+    let res = read_response_matching client id in
     Mutex.unlock client.mutex;
     res
-  with exn ->
+  with
+  | Eio.Cancel.Cancelled _ as exn ->
+    Mutex.unlock client.mutex;
+    raise exn
+  | exn ->
     Mutex.unlock client.mutex;
     Error (Printexc.to_string exn)
 
 let send_notification client method_name params =
   Mutex.lock client.mutex;
   let req = make_notification method_name params in
-  let req_str = Yojson.Safe.to_string req in
+  let req_str = Yojson.Safe.to_string req ^ "\n" in
   try
-    output_string client.out_chan (req_str ^ "\n");
-    flush client.out_chan;
+    client.write_line req_str;
     Mutex.unlock client.mutex
-  with _ ->
+  with
+  | Eio.Cancel.Cancelled _ as exn ->
+    Mutex.unlock client.mutex;
+    raise exn
+  | _ ->
     Mutex.unlock client.mutex
 
-let start_stderr_forwarder name err_chan =
-  ignore (Thread.create (fun () ->
-    try
-      let rec loop () =
-        let line = input_line err_chan in
-        Printf.eprintf "[MCP Stderr (%s)]: %s\n%!" name line;
-        loop ()
-      in
-      loop ()
-    with _ ->
-      try close_in_noerr err_chan with _ -> ()
-  ) ())
+let spawn_server_eio ~sw mgr name command args =
+  try
+    let cmd = command :: args in
+    let (stdin_r, stdin_w) = Eio.Process.pipe ~sw mgr in
+    let (stdout_r, stdout_w) = Eio.Process.pipe ~sw mgr in
+    let proc = Eio.Process.spawn ~sw mgr ~stdin:stdin_r ~stdout:stdout_w cmd in
+    let stdout_buf = Eio.Buf_read.of_flow ~max_size:65536 stdout_r in
+    let write_line str = Eio.Flow.copy_string str stdin_w in
+    let read_line () =
+      try Some (Eio.Buf_read.line stdout_buf)
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | _ -> None
+    in
+    let close () = try Eio.Process.await proc |> ignore with _ -> () in
+    Ok { name; write_line; read_line; close; next_id = 1; mutex = Mutex.create () }
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn -> Error (Printf.sprintf "Failed to spawn Eio MCP server %s: %s" name (Printexc.to_string exn))
 
-let spawn_server name command args =
+let spawn_server_unix name command args =
   let args_arr = Array.of_list (command :: args) in
   try
-    let (in_c, out_c, err_c) = Unix.open_process_full command args_arr in
-    Ok (in_c, out_c, err_c)
-  with exn ->
-    Error (Printf.sprintf "Failed to spawn MCP server %s: %s" name (Printexc.to_string exn))
+    let (in_chan, out_chan, err_chan) = Unix.open_process_full command args_arr in
+    ignore (Thread.create (fun () ->
+      try
+        let rec loop () =
+          let line = input_line err_chan in
+          Printf.eprintf "[MCP Stderr (%s)]: %s\n%!" name line;
+          loop ()
+        in loop ()
+      with _ -> try close_in_noerr err_chan with _ -> ()
+    ) ());
+    let write_line str = output_string out_chan str; flush out_chan in
+    let read_line () =
+      try Some (input_line in_chan)
+      with
+      | Eio.Cancel.Cancelled _ as exn -> raise exn
+      | _ -> None
+    in
+    let close () = try ignore (Unix.close_process_full (in_chan, out_chan, err_chan)) with _ -> () in
+    Ok { name; write_line; read_line; close; next_id = 1; mutex = Mutex.create () }
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn -> Error (Printf.sprintf "Failed to spawn Unix MCP server %s: %s" name (Printexc.to_string exn))
 
-let connect name command args =
-  match spawn_server name command args with
-  | Error e -> Error e
-  | Ok (in_chan, out_chan, err_chan) ->
-    let client = {
-      name;
-      in_chan;
-      out_chan;
-      err_chan;
-      next_id = 1;
-      mutex = Mutex.create ();
-    } in
-    start_stderr_forwarder name err_chan;
-    (* Initialize handshake *)
+let connect ?mgr ?sw name command args =
+  let client_res =
+    match mgr, sw with
+    | Some mgr, Some sw -> spawn_server_eio ~sw mgr name command args
+    | _ -> spawn_server_unix name command args
+  in
+  match client_res with
+  | Error err -> Error err
+  | Ok client ->
     let init_params = `Assoc [
       ("protocolVersion", `String "2024-11-05");
       ("capabilities", `Assoc []);
@@ -152,8 +173,7 @@ let connect name command args =
       ]);
     ] in
     match send_request client "initialize" (Some init_params) with
-    | Error err ->
-      Error (Printf.sprintf "Initialization failed for %s: %s" name err)
+    | Error err -> Error (Printf.sprintf "Initialization failed for %s: %s" name err)
     | Ok _res ->
       send_notification client "notifications/initialized" None;
       Ok client
@@ -172,11 +192,12 @@ let list_tools client =
         let desc_opt = t_json |> member "description" |> to_string_option in
         let schema = t_json |> member "inputSchema" in
         match name_opt, desc_opt with
-        | Some name, Some desc ->
-          Some { name; description = desc; schema }
+        | Some name, Some desc -> Some { name; description = desc; schema }
         | _ -> None
       ) tools_list
-    with exn ->
+    with
+    | Eio.Cancel.Cancelled _ as exn -> raise exn
+    | exn ->
       Printf.eprintf "Error parsing tools for %s: %s\n%!" client.name (Printexc.to_string exn);
       []
 
@@ -188,8 +209,7 @@ let parse_call_response json =
       match List.assoc_opt "message" err with
       | Some (`String s) -> s
       | _ -> "Unknown error"
-    in
-    Error msg
+    in Error msg
   | _ ->
     match json |> member "result" with
     | `Null -> Error "Empty result from server"
@@ -238,23 +258,18 @@ let make_packed_tool (client : mcp_client) (tool_def : mcp_tool_def) =
   Tool.Tool (module T)
 
 let close_all () =
-  List.iter (fun client ->
-    try
-      let _status = Unix.close_process_full (client.in_chan, client.out_chan, client.err_chan) in
-      ()
-    with _ -> ()
-  ) global_registry.clients;
+  List.iter (fun client -> try client.close () with _ -> ()) global_registry.clients;
   global_registry.clients <- []
 
 let () =
   at_exit close_all
 
-let init_mcp_servers configs =
+let init_mcp_servers ?mgr ?sw configs =
   close_all ();
   let clients = List.filter_map (fun (cfg : Config.mcp_server_config) ->
     Printf.eprintf "[MCP] Connecting to server '%s' (%s %s %s)...\n%!"
       cfg.name cfg.transport cfg.command (String.concat " " cfg.args);
-    match connect cfg.name cfg.command cfg.args with
+    match connect ?mgr ?sw cfg.name cfg.command cfg.args with
     | Ok client ->
       Printf.eprintf "[MCP] Connected successfully to '%s'.\n%!" cfg.name;
       Some client

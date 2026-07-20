@@ -262,3 +262,40 @@ let%expect_test "session_summarise" =
     Role: System
     Content: [Conversation summary]: This is a summary.
     |}]
+
+let%test_unit "caravan_error_handling" =
+  let err = Caravan_error.Tool_error "test failure" in
+  assert (Caravan_error.to_string err = "Tool Error: test failure");
+  let res = Caravan_error.safe_run (fun () -> 42) in
+  assert (res = Ok 42);
+  let res_exn = Caravan_error.safe_run (fun () -> failwith "boom") in
+  match res_exn with
+  | Error (Caravan_error.Exception msg) -> assert (String.length msg > 0)
+  | _ -> failwith "Expected Exception error"
+
+let%test_unit "permission_policies" =
+  assert (Permission.check Permission.Always_allow "tool" "args");
+  assert (not (Permission.check Permission.Deny_all "tool" "args"));
+  let custom = Permission.Custom (fun name args -> name = "safe_tool") in
+  assert (Permission.check custom "safe_tool" "");
+  assert (not (Permission.check custom "unsafe_tool" ""))
+
+let%expect_test "algebraic_effects_dispatch" =
+  let logs = ref [] in
+  let on_log lvl msg = logs := (lvl ^ ": " ^ msg) :: !logs in
+  let permission_policy name _args = name <> "forbidden_tool" in
+  let on_exec name args = "Executed " ^ name ^ "(" ^ args ^ ")" in
+  let result =
+    Effects.run_with_effects ~permission_policy ~on_log ~on_exec (fun () ->
+      let perm1 = Effects.ask_permission "allowed_tool" "{}" in
+      let perm2 = Effects.ask_permission "forbidden_tool" "{}" in
+      Effects.log_event "info" "Testing effects";
+      let exec_res = Effects.exec_tool "my_tool" "my_arg" in
+      Printf.sprintf "perm1=%b perm2=%b exec=%s" perm1 perm2 exec_res
+    )
+  in
+  print_endline result;
+  List.iter print_endline (List.rev !logs);
+  [%expect {|
+    perm1=true perm2=false exec=Executed my_tool(my_arg)
+    info: Testing effects |}]

@@ -15,6 +15,9 @@
  (preprocess
   (pps ppx_let ppx_yojson_conv))
  (modules
+  Caravan_error
+  Permission
+  Effects
   Config
   Types
   Document
@@ -28,6 +31,7 @@
   Session
   Prompt
   Template
+  Subagent
   Agent
   Chain
   Mcp

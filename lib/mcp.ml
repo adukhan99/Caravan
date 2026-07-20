@@ -244,6 +244,7 @@ let make_packed_tool (client : mcp_client) (tool_def : mcp_tool_def) =
   let caravan_name = client.name ^ "_" ^ tool_def.name in
   let module T = struct
     let name = caravan_name
+    let aliases = [tool_def.name]
     let description = tool_def.description
     type input = Yojson.Safe.t
     type output = string

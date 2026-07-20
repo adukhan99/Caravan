@@ -2,6 +2,7 @@ open Caravan.Tool
 
 module Mkdir : TOOL with type input = string and type output = (unit, string) result = struct
   let name = "mkdir"
+  let aliases = ["make_dir"; "create_dir"]
   let description = "Creates a directory including any necessary parent directories."
   type input = string
   type output = (unit, string) result

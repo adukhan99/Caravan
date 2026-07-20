@@ -7,6 +7,7 @@ type grep_input = {
 
 module Grep : TOOL with type input = grep_input and type output = (string, string) result = struct
   let name = "grep"
+  let aliases = ["rg"; "ripgrep"; "grep_search"; "search_files"]
   let description = "Search for a pattern in a file (basic grep)."
   type input = grep_input
   type output = (string, string) result

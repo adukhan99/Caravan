@@ -5,6 +5,7 @@ let strict_mode =
 
 module Bash : TOOL with type input = string and type output = string = struct
   let name = "bash"
+  let aliases = ["sh"; "shell"; "terminal"; "cmd"; "exec"; "run_command"]
   let description =
     let base =
       "The primary tool for running and orchestrating CLI applications and system utilities. \

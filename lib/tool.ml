@@ -2,6 +2,7 @@
 
 module type TOOL = sig
   val name : string
+  val aliases : string list
   val description : string
 
   type input
@@ -19,8 +20,17 @@ type packed_tool =
   | Tool : (module TOOL with type input = 'i and type output = 'o) -> packed_tool
 
 let name_of_packed (Tool (module T)) = T.name
+let aliases_of_packed (Tool (module T)) = T.aliases
 let description_of_packed (Tool (module T)) = T.description
 let schema_of_packed (Tool (module T)) = T.json_schema ()
+
+let matches_name (Tool (module T)) (requested_name : string) : bool =
+  T.name = requested_name || List.mem requested_name T.aliases
+
+let find_tool (tools : packed_tool list) (name : string) : packed_tool option =
+  match List.find_opt (fun t -> name_of_packed t = name) tools with
+  | Some _ as exact -> exact
+  | None -> List.find_opt (fun t -> List.mem name (aliases_of_packed t)) tools
 
 let execute_packed (Tool (module T)) (args_json : string) : string =
   let cleaned_args = Parser.extract_code args_json |> Result.value ~default:args_json in

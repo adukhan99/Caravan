@@ -5,6 +5,7 @@ open Yojson.Safe.Util
 
 module Finish : TOOL = struct
   let name = "finish"
+  let aliases = ["done"; "complete"; "stop"; "end"]
   let description = "Call this tool when you have completed the task or reached a final conclusion. Provide a summary of your work."
 
   type input = {

@@ -91,7 +91,7 @@ let history_for_llm sess =
 let execute_tool_calls net clock sess tcs =
   let verbose = Config.get_spinner_verbose () in
   List.map (fun tc ->
-    match List.find_opt (fun t -> Tool.name_of_packed t = tc.name) sess.tools with
+    match Tool.find_tool sess.tools tc.name with
     | None ->
       let msg = Printf.sprintf "Tool '%s' not found in registered tools." tc.name in
       Printf.eprintf "%s: %s → %s\n%!" (Ui.magenta "[Tool]") tc.name (Ui.red "NOT FOUND");
@@ -151,7 +151,7 @@ let rec run_conversations net clock sess =
   let enabled = Config.get_spinner_enabled () in
   let verbose = Config.get_spinner_verbose () in
   let result = Ui.with_spinner clock verb enabled (fun () ->
-    Provider.complete_packed net ~tools:sess.tools sess.provider (history_for_llm sess)
+    Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:sess.tools sess.provider (history_for_llm sess)
   ) in
   if not verbose then
     Ui.println_ansi (Printf.sprintf "\n%s" (Ui.bold (Ui.green "Assistant:")));
@@ -187,7 +187,7 @@ let rec run_conversations_stream net clock sess ~on_token =
       in
       Fun.protect
         ~finally:(fun () -> if not (Eio.Promise.is_resolved promise) then Eio.Promise.resolve resolver ())
-        (fun () -> Provider.stream_packed net ~tools:sess.tools ~on_token:wrapped_on_token sess.provider (history_for_llm sess))
+        (fun () -> Provider.stream_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:sess.tools ~on_token:wrapped_on_token sess.provider (history_for_llm sess))
     )
   in
   let outcome = run_turn_step net clock sess result_with_meta.value in
@@ -222,7 +222,7 @@ let summarise net clock sess =
     let verb = "Summarizing" in
     let enabled = Config.get_spinner_enabled () in
     let result = Ui.with_spinner clock verb enabled (fun () ->
-      Provider.complete_packed net ~tools:[] sess.provider [user_msg prompt]
+      Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:[] sess.provider [user_msg prompt]
     ) in
     let summary_content = String.trim result.value.content in
     let new_mem_t =

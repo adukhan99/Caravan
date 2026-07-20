@@ -8,6 +8,7 @@ type sed_input = {
 
 module Sed : TOOL with type input = sed_input and type output = (unit, string) result = struct
   let name = "sed"
+  let aliases = ["replace"; "regex_replace"]
   let description = "Basic sed replacement in a file (replaces all occurrences of a regex pattern with a replacement string)."
   type input = sed_input
   type output = (unit, string) result

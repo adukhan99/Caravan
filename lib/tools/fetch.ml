@@ -6,6 +6,7 @@ module Fetch : TOOL = struct
   type output = (string, string) result
 
   let name = "web_fetch"
+  let aliases = ["fetch"; "curl"; "http_get"; "web_fetch"; "download"]
   let description = "Fetches and parses text content from a given URL."
 
   let json_schema () =

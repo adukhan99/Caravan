@@ -188,7 +188,9 @@ let handle_slash_command net clock st line =
     (match rest with
      | [new_model] ->
        st.model <- new_model;
-       st.session <- Session.with_model st.session new_model;
+       let provider = make_any_provider st.provider_name new_model st.base_url in
+       st.provider <- provider;
+       st.session <- Session.with_provider (Session.with_model st.session new_model) provider;
        println_ansi (yellow (Printf.sprintf "  ✓ Model → %s" new_model))
      | _ -> usage "/model" "<model-name>")
 

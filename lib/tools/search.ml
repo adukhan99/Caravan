@@ -15,6 +15,7 @@ module Search : TOOL = struct
 
 
   let name        = "web_search"
+  let aliases     = ["search"; "brave_search"; "google_search"; "web"]
   let description = "Searches the web and returns titles, URLs, and snippets."
 
   let json_schema () =

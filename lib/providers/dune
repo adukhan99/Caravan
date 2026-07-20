@@ -10,4 +10,4 @@
   uri
   yojson
   re)
- (modules Ollama Openai Llama_cpp))
+ (modules Openai_compatible Ollama Openai Llama_cpp))

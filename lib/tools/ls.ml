@@ -2,6 +2,7 @@ open Caravan.Tool
 
 module Ls : TOOL with type input = string and type output = string = struct
   let name = "ls"
+  let aliases = ["list_dir"; "dir"; "list_files"]
   let description =
     "Lists files and directories at a given path. \
      Returns a newline-separated list of entries with type prefix: \

@@ -48,6 +48,18 @@ let%test_unit "tool_read_file" =
   if res <> "Hello Tool" then
     failwith ("Tool read_file failed, got: " ^ res)
 
+let%test_unit "tool_aliases" =
+  let tools = [
+    Tool.Tool (module CaravanTools.Read_file.Read_file);
+    Tool.Tool (module CaravanTools.Search.Search);
+  ] in
+  (match Tool.find_tool tools "open_file" with
+   | Some t -> assert (Tool.name_of_packed t = "read_file")
+   | None -> failwith "Expected to resolve alias 'open_file' to 'read_file'");
+  (match Tool.find_tool tools "search" with
+   | Some t -> assert (Tool.name_of_packed t = "web_search")
+   | None -> failwith "Expected to resolve alias 'search' to 'web_search'")
+
 let%test_unit "tool_touch" =
   let path = "test_dummy_touch.txt" in
   if Sys.file_exists path then Sys.remove path;
@@ -231,10 +243,10 @@ let%expect_test "session_summarise" =
     let module MockProvider : Provider.PROVIDER with type config = unit = struct
       type config = unit
       let name = "mock"
-      let complete _net _cfg ?tools:_ _msgs =
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
         let reply = Types.assistant_msg "This is a summary." in
         Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
-      let stream _net _cfg ?tools:_ _msgs ~on_token =
+      let stream _net _cfg ?model:_ ?options:_ ?tools:_ _msgs ~on_token =
         on_token "This is a summary.";
         let reply = Types.assistant_msg "This is a summary." in
         Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
@@ -310,13 +322,13 @@ let%test_unit "value_queries" =
   |} in
   let val_data = Value.of_string_permissive json_str in
   
-  (* Field filtering with where_field *)
+  (* where_field *)
   let filtered = Value.where_field "role" (fun v -> Value.to_string v = "user") val_data in
   (match filtered with
    | Ok (Value.List items) -> assert (List.length items = 2)
    | _ -> failwith "where_field failed");
 
-  (* Field selection with select *)
+  (* select *)
   let selected = Value.select ["name"; "age"] val_data in
   (match selected with
    | Ok (Value.List items) ->
@@ -345,4 +357,30 @@ let%test_unit "coercive_parsers" =
   (match Parser.permissive_json json_with_fence with
    | Ok (`Assoc [("key", `String "value")]) -> ()
    | _ -> failwith "permissive_json failed on code fence")
+
+let%test_unit "session_with_model_override" =
+  Eio_main.run (fun env ->
+    let last_model_called = ref "" in
+    let module ModelCheckProvider : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "model_check"
+      let complete _net _cfg ?model ?options:_ ?tools:_ _msgs =
+        last_model_called := Option.value ~default:"default_model" model;
+        let reply = Types.assistant_msg "ok" in
+        Types.wrap_result ~raw_response:"ok" ~model:!last_model_called ~provider:"model_check" reply
+      let stream _net _cfg ?model ?options:_ ?tools:_ _msgs ~on_token:_ =
+        last_model_called := Option.value ~default:"default_model" model;
+        let reply = Types.assistant_msg "ok" in
+        Types.wrap_result ~raw_response:"ok" ~model:!last_model_called ~provider:"model_check" reply
+      let list_models _net _cfg = ["model_check"]
+    end in
+    let provider = Provider.Provider ((module ModelCheckProvider), ()) in
+    let sess = Session.create ~tools:[] "initial_model" provider in
+    let (sess', _) = Session.turn env#net env#clock sess "hello" in
+    assert (!last_model_called = "initial_model");
+    let sess'' = Session.with_model sess' "switched_model" in
+    let (_sess''', _) = Session.turn env#net env#clock sess'' "hello again" in
+    assert (!last_model_called = "switched_model")
+  )
+
 

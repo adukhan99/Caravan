@@ -10,6 +10,8 @@ module type PROVIDER = sig
   val complete
     :  _ Eio.Net.t
     -> config
+    -> ?model:string
+    -> ?options:gen_options
     -> ?tools:Tool.packed_tool list
     -> chat_message list
     -> chat_message result_with_meta
@@ -17,6 +19,8 @@ module type PROVIDER = sig
   val stream
     :  _ Eio.Net.t
     -> config
+    -> ?model:string
+    -> ?options:gen_options
     -> ?tools:Tool.packed_tool list
     -> chat_message list
     -> on_token:(string -> unit)
@@ -28,11 +32,11 @@ end
 type packed_provider =
   | Provider : (module PROVIDER with type config = 'c) * 'c -> packed_provider
 
-let complete_packed net ?tools (Provider ((module P), cfg)) msgs =
-  P.complete net cfg ?tools msgs
+let complete_packed net ?model ?options ?tools (Provider ((module P), cfg)) msgs =
+  P.complete net cfg ?model ?options ?tools msgs
 
-let stream_packed net ?tools ~on_token (Provider ((module P), cfg)) msgs =
-  P.stream net cfg ?tools msgs ~on_token
+let stream_packed net ?model ?options ?tools ~on_token (Provider ((module P), cfg)) msgs =
+  P.stream net cfg ?model ?options ?tools msgs ~on_token
 
 let list_models_packed net (Provider ((module P), cfg)) =
   P.list_models net cfg

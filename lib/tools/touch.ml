@@ -2,6 +2,7 @@ open Caravan.Tool
 
 module Touch : TOOL with type input = string and type output = (unit, string) result = struct
   let name = "touch"
+  let aliases = ["create_empty_file"]
   let description = "Creates an empty file or updates its modification time."
   type input = string
   type output = (unit, string) result

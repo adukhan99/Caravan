@@ -2,6 +2,7 @@ open Caravan.Tool
 
 module Read_file : TOOL with type input = string and type output = (string, string) result = struct
   let name = "read_file"
+  let aliases = ["open_file"; "view_file"; "read"; "cat"]
   let description = "Reads the entire contents of a file."
   type input = string
   type output = (string, string) result

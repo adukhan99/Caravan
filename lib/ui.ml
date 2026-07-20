@@ -177,7 +177,7 @@ module Spinner = struct
   (** Neutral fallback for unknown tools. *)
   let default = {
     frames   = braille;
-    colors   = [| cyan; magenta; yellow; green; blue |];
+    colors   = [| white; yellow; cyan; magenta; blue |];
     interval = 0.08;
   }
 

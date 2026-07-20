@@ -35,4 +35,5 @@
   Agent
   Chain
   Mcp
+  Value
   Redis_store))

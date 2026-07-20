@@ -23,14 +23,22 @@ let description_of_packed (Tool (module T)) = T.description
 let schema_of_packed (Tool (module T)) = T.json_schema ()
 
 let execute_packed (Tool (module T)) (args_json : string) : string =
-  match Yojson.Safe.from_string args_json with
+  let cleaned_args = Parser.extract_code args_json |> Result.value ~default:args_json in
+  match Yojson.Safe.from_string (String.trim cleaned_args) with
   | exception _ ->
     Printf.sprintf
-      "Error: could not parse tool arguments as JSON. \
-       Received: %s. Please provide valid JSON matching the schema." args_json
+      "Error: could not parse tool arguments as JSON.\n\
+       Received: %s.\n\
+       Expected JSON matching schema: %s"
+      args_json (Yojson.Safe.to_string (T.json_schema ()))
   | json ->
     match T.parse_args json with
-    | Error err -> Printf.sprintf "Error parsing arguments: %s" err
+    | Error err ->
+      Printf.sprintf
+        "SCHEMA_MISMATCH for tool '%s': %s\n\
+         Expected JSON schema: %s\n\
+         Please retry with valid parameters matching this schema."
+        T.name err (Yojson.Safe.to_string (T.json_schema ()))
     | Ok input ->
       let output =
         try Effect.perform (T.Exec input)

@@ -299,3 +299,50 @@ let%expect_test "algebraic_effects_dispatch" =
   [%expect {|
     perm1=true perm2=false exec=Executed my_tool(my_arg)
     info: Testing effects |}]
+
+let%test_unit "value_queries" =
+  let json_str = {|
+    [
+      {"name": "Alice", "age": 30, "role": "admin"},
+      {"name": "Bob", "age": 25, "role": "user"},
+      {"name": "Charlie", "age": 35, "role": "user"}
+    ]
+  |} in
+  let val_data = Value.of_string_permissive json_str in
+  
+  (* Field filtering with where_field *)
+  let filtered = Value.where_field "role" (fun v -> Value.to_string v = "user") val_data in
+  (match filtered with
+   | Ok (Value.List items) -> assert (List.length items = 2)
+   | _ -> failwith "where_field failed");
+
+  (* Field selection with select *)
+  let selected = Value.select ["name"; "age"] val_data in
+  (match selected with
+   | Ok (Value.List items) ->
+     let first = List.hd items in
+     assert (Value.get_opt "name" first = Some (Value.String "Alice"));
+     assert (Value.get_opt "role" first = None)
+   | _ -> failwith "select failed");
+
+  (* LISPy S-expression query *)
+  (match Value.eval_lisp "(count)" val_data with
+   | Ok (Value.Int 3) -> ()
+   | _ -> failwith "LISP (count) failed");
+  
+  (match Value.eval_lisp "(first)" val_data with
+   | Ok record ->
+     assert (Value.get_opt "name" record = Some (Value.String "Alice"))
+   | _ -> failwith "LISP (first) failed")
+
+let%test_unit "coercive_parsers" =
+  assert (Parser.coercive_int "42" = Ok 42);
+  assert (Parser.coercive_int "\"123\"" = Ok 123);
+  assert (Parser.coercive_bool "TRUE" = Ok true);
+  assert (Parser.coercive_bool "1" = Ok true);
+  
+  let json_with_fence = "```json\n{\"key\": \"value\"}\n```" in
+  (match Parser.permissive_json json_with_fence with
+   | Ok (`Assoc [("key", `String "value")]) -> ()
+   | _ -> failwith "permissive_json failed on code fence")
+

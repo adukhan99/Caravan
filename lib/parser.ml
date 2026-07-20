@@ -179,9 +179,53 @@ let json_array_strings : string list t =
       | _ -> None) l)
   | _ -> fail "Expected a JSON array"
 
+(** Permissive & Coercive Parsers *)
+
+let permissive_json : Yojson.Safe.t t = fun s ->
+  let cleaned = extract_code s |> Result.value ~default:s in
+  try return (Yojson.Safe.from_string (String.trim cleaned)) s
+  with Yojson.Json_error msg -> fail ("JSON parse error: " ^ msg) s
+
+let structured_value : Value.t t = fun s ->
+  return (Value.of_string_permissive s) s
+
+let coercive_string : string t = fun s ->
+  match permissive_json s with
+  | Ok (`String v) -> return v s
+  | Ok (`Int v)    -> return (string_of_int v) s
+  | Ok (`Float v)  -> return (string_of_float v) s
+  | Ok (`Bool v)   -> return (string_of_bool v) s
+  | _              -> return (String.trim s) s
+
+let coercive_int : int t = fun s ->
+  match int_val s with
+  | Ok i -> return i s
+  | Error _ ->
+    (match permissive_json s with
+     | Ok (`Int i) -> return i s
+     | Ok (`Float f) -> return (int_of_float f) s
+     | Ok (`String str) ->
+       (match int_of_string_opt (String.trim str) with
+        | Some i -> return i s
+        | None -> fail ("Cannot coerce int from: " ^ str) s)
+     | _ -> fail ("Cannot coerce int from: " ^ s) s)
+
+let coercive_bool : bool t = fun s ->
+  match bool s with
+  | Ok b -> return b s
+  | Error _ ->
+    (match permissive_json s with
+     | Ok (`Bool b) -> return b s
+     | Ok (`Int i)  -> return (i <> 0) s
+     | Ok (`String str) -> bool str
+     | _ -> fail ("Cannot coerce bool from: " ^ s) s)
+
+let with_default default p = p <|> return default
+
 let run p s = p s
 
 let run_exn p s =
   match p s with
   | Ok v    -> v
   | Error e -> failwith e
+

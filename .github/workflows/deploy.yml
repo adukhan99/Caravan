@@ -40,11 +40,12 @@ jobs:
         uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: 5.2.0
+          apt-packages: libssl-dev libgmp-dev pkg-config
 
       - name: Install Dependencies
         run: |
           opam pin add -n Caravan .
-          opam install . --deps-only --with-doc
+          opam install . --deps-only --with-doc -y
 
       - name: Build Documentation
         run: opam exec -- dune build @doc

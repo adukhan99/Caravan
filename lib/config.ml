@@ -1,8 +1,11 @@
 (** Centralized TOML configuration reader. *)
 
 let config_path =
-  let home = match Sys.getenv_opt "HOME" with Some h -> h | None -> "." in
-  Filename.concat home ".caravan/config.toml"
+  match Sys.getenv_opt "CARAVAN_CONFIG" with
+  | Some p when p <> "" -> p
+  | _ ->
+    let home = match Sys.getenv_opt "HOME" with Some h -> h | None -> "." in
+    Filename.concat home ".caravan/config.toml"
 
 let ensure_config_exists () =
   let dir = Filename.dirname config_path in
@@ -147,7 +150,11 @@ let get_spinner_verbs tool_name =
 let get_verbs tool_name =
   match get_spinner_verbs tool_name with
   | Some vs -> vs
-  | None    -> ["Running " ^ tool_name]
+  | None    ->
+    match tool_name with
+    | "thinking" -> ["Thinking"]
+    | "summarizing" -> ["Summarizing"]
+    | _ -> ["Running " ^ tool_name]
 
 (** Pick a verb at random from a list. *)
 let pick_verb = function

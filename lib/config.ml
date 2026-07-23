@@ -87,6 +87,46 @@ type mcp_server_config = {
   args      : string list;
 }
 
+(** SLURM-GRES-style generic resource descriptor for a subagent.
+    Each key maps to a boolean capability flag.  Unknown keys are
+    preserved so future resource types (e.g. [gen_image]) compose
+    without breaking older configs.  Default: all capabilities on. *)
+type gres = {
+  thinking   : bool;  (** Extended chain-of-thought / thinking tokens *)
+  tools      : bool;  (** Tool-calling support *)
+  vision     : bool;  (** Image / multi-modal input *)
+  gen_image  : bool;  (** Image generation output *)
+  extra      : (string * bool) list;  (** Forward-compatible catch-all *)
+}
+
+let default_gres = {
+  thinking  = true;
+  tools     = true;
+  vision    = true;
+  gen_image = false;
+  extra     = [];
+}
+
+(** Config for a single subagent worker, read from a [[subagents]] table. *)
+type subagent_config = {
+  name          : string;
+  worker_role    : string;   (** "atomic" | "parallel" *)
+  provider_ref  : string;   (** key into [providers.*] table *)
+  model         : string;
+  max_tokens    : int option;
+  temperature   : float option;
+  tool_names    : string list; (** validated against registered tools at startup *)
+  system_prompt : string;
+  gres          : gres;
+}
+
+(** Config for a named provider endpoint, read from [providers.<name>]. *)
+type provider_config = {
+  base_url    : string;
+  api_key_env : string option;  (** env-var name that holds the key *)
+  org_id_env  : string option;
+}
+
 let get_mcp_servers () =
   match Lazy.force toml_ast with
   | None -> []
@@ -121,6 +161,125 @@ let get_mcp_servers () =
         | _ -> None
       ) elements
     with _ -> []
+
+(** Read a TOML boolean field from an association list, defaulting to [d]. *)
+let assoc_bool fields key d =
+  match List.assoc_opt key fields with
+  | Some (Otoml.TomlBoolean b) -> b
+  | _ -> d
+
+(** Read a TOML string field from an association list, returning None on miss. *)
+let assoc_string_opt fields key =
+  match List.assoc_opt key fields with
+  | Some (Otoml.TomlString s) -> Some s
+  | _ -> None
+
+(** Read a TOML integer field from an association list, returning None on miss. *)
+let assoc_int_opt fields key =
+  match List.assoc_opt key fields with
+  | Some (Otoml.TomlInteger n) -> Some n
+  | _ -> None
+
+(** Read a TOML float field. Accepts both TomlFloat and TomlInteger. *)
+let assoc_float_opt fields key =
+  match List.assoc_opt key fields with
+  | Some (Otoml.TomlFloat f) -> Some f
+  | Some (Otoml.TomlInteger n) -> Some (float_of_int n)
+  | _ -> None
+
+(** Read a [gres.*] sub-table from a [[subagents]] entry. *)
+let parse_gres fields =
+  match List.assoc_opt "gres" fields with
+  | Some (Otoml.TomlTable gfields | Otoml.TomlInlineTable gfields) ->
+    let known = ["thinking"; "tools"; "vision"; "gen_image"] in
+    let extra =
+      List.filter_map (fun (k, v) ->
+        if List.mem k known then None
+        else match v with Otoml.TomlBoolean b -> Some (k, b) | _ -> None
+      ) gfields
+    in
+    { thinking  = assoc_bool gfields "thinking"  default_gres.thinking;
+      tools     = assoc_bool gfields "tools"     default_gres.tools;
+      vision    = assoc_bool gfields "vision"    default_gres.vision;
+      gen_image = assoc_bool gfields "gen_image" default_gres.gen_image;
+      extra;
+    }
+  | _ -> default_gres
+
+(** Read all [[subagents]] entries from the config file. *)
+let get_subagents () =
+  match Lazy.force toml_ast with
+  | None -> []
+  | Some ast ->
+    try
+      let node = Otoml.find ast (fun x -> x) ["subagents"] in
+      let elements = match node with
+        | Otoml.TomlArray l | Otoml.TomlTableArray l -> l
+        | _ -> []
+      in
+      List.filter_map (fun item ->
+        match item with
+        | Otoml.TomlTable fields | Otoml.TomlInlineTable fields ->
+          let get_str  k = assoc_string_opt fields k in
+          let get_strl k =
+            match List.assoc_opt k fields with
+            | Some (Otoml.TomlArray arr | Otoml.TomlTableArray arr) ->
+              List.filter_map (function Otoml.TomlString s -> Some s | _ -> None) arr
+            | _ -> []
+          in
+          (match get_str "name", get_str "provider", get_str "model" with
+           | Some name, Some provider_ref, Some model ->
+             Some {
+               name;
+               worker_role    = Option.value ~default:"atomic" (get_str "role");
+               provider_ref;
+               model;
+               max_tokens    = assoc_int_opt   fields "max_tokens";
+               temperature   = assoc_float_opt fields "temperature";
+               tool_names    = get_strl "tools";
+               system_prompt = Option.value ~default:"" (get_str "system_prompt");
+               gres          = parse_gres fields;
+             }
+           | _ -> None)
+        | _ -> None
+      ) elements
+    with _ -> []
+
+(** Read a single [providers.<name>] table. *)
+let get_provider_config name =
+  match Lazy.force toml_ast with
+  | None -> None
+  | Some ast ->
+    try
+      let node = Otoml.find ast (fun x -> x) ["providers"; name] in
+      (match node with
+       | Otoml.TomlTable fields | Otoml.TomlInlineTable fields ->
+         (match assoc_string_opt fields "base_url" with
+          | None -> None
+          | Some base_url ->
+            Some {
+              base_url;
+              api_key_env = assoc_string_opt fields "api_key_env";
+              org_id_env  = assoc_string_opt fields "org_id_env";
+            })
+       | _ -> None)
+    with _ -> None
+
+(** Read the [orchestrator] table. Returns (provider_ref, model). *)
+let get_orchestrator () =
+  match Lazy.force toml_ast with
+  | None -> None
+  | Some ast ->
+    try
+      let node = Otoml.find ast (fun x -> x) ["orchestrator"] in
+      (match node with
+       | Otoml.TomlTable fields | Otoml.TomlInlineTable fields ->
+         (match assoc_string_opt fields "provider",
+                assoc_string_opt fields "model" with
+          | Some p, Some m -> Some (p, m)
+          | _ -> None)
+       | _ -> None)
+    with _ -> None
 
 let get_stream () =
   get_bool_opt (Some "CARAVAN_STREAM") "stream" |> Option.value ~default:true

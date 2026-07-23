@@ -1,0 +1,129 @@
+# ~/.caravan/config.toml  (or set CARAVAN_CONFIG to point here)
+# Heterogeneous Agent Swarm — Gemini orchestrator + Nanbeige workers
+# ─────────────────────────────────────────────────────────────────
+
+# ── Global defaults (used by the interactive REPL / caravan CLI) ──────────────
+stream          = true
+spinner.enabled = true
+spinner.verbose = false
+max_turns       = 15
+
+# ── Orchestrator ──────────────────────────────────────────────────────────────
+# The high-level planner.  Gemini only sees task decomposition and final
+# synthesis — all mechanical work is delegated to local workers.
+[orchestrator]
+provider      = "gemini"
+model         = "gemini-3.6-flash"
+api_key_env   = "GEMINI_API_KEY"          # env var that holds the key
+
+# ── Provider endpoints ────────────────────────────────────────────────────────
+# Referenced by [[subagents]] entries via the `provider` key.
+# For local providers, omit api_key_env entirely.
+
+[providers.gemini]
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+
+[providers.qwen_local]
+base_url    = "http://127.0.0.1:11434/v1"
+# No api_key_env — Ollama runs locally without auth
+
+# Optional: a faster/smaller model for pure-text tasks
+[providers.qwen_local_fast]
+base_url    = "http://127.0.0.1:11434/v1"
+
+# ── Subagent worker pool ──────────────────────────────────────────────────────
+# Each [[subagents]] entry defines one worker persona.
+# tool_names are validated at startup — typos raise an error immediately.
+
+# ── Worker 1: Code writer ─────────────────────────────────────────────────────
+[[subagents]]
+name        = "code_writer"
+role        = "atomic"              # single-shot, not parallelised
+provider    = "qwen_local"
+model       = "kwangsuklee/Nanbeige4.1-3B.Q4_K_M:latest"
+max_tokens  = 2048
+temperature = 0.2
+tools       = ["bash", "read_file", "write_file", "finish"]
+system_prompt = """
+You are a precise, minimal code-writing assistant.
+Given a specification, produce correct, idiomatic code with no commentary,
+no explanation, and no filler.  Output only the code itself.
+Call finish when done.
+"""
+
+# GRES: this worker uses extended thinking and needs tool-call support.
+# Vision and image-generation are off — it only handles text/code.
+[subagents.gres]
+thinking  = true
+tools     = true
+vision    = false
+gen_image = false
+
+# ── Worker 2: Summarizer ──────────────────────────────────────────────────────
+[[subagents]]
+name        = "summarizer"
+role        = "atomic"
+provider    = "qwen_local_fast"
+model       = "kwangsuklee/Nanbeige4.1-3B.Q4_K_M:latest"
+max_tokens  = 512
+temperature = 0.1
+tools       = ["finish"]            # finish only — no file/shell access
+system_prompt = """
+You are a summarisation engine.
+Return a concise summary of the provided text in ≤ 150 words.
+No headings, no bullet points — plain prose only.
+Call finish when done.
+"""
+
+# GRES: pure text summarisation — disable thinking tokens for speed.
+[subagents.gres]
+thinking  = false
+tools     = false
+vision    = false
+gen_image = false
+
+# ── Worker 3: Fact extractor (parallel-safe) ──────────────────────────────────
+[[subagents]]
+name        = "fact_extractor"
+role        = "parallel"            # safe to fan-out with delegate_parallel
+provider    = "qwen_local_fast"
+model       = "kwangsuklee/Nanbeige4.1-3B.Q4_K_M:latest"
+max_tokens  = 512
+temperature = 0.0                   # deterministic — extraction, not generation
+tools       = ["finish"]
+system_prompt = """
+You are a structured fact-extraction engine.
+Given a passage of text, extract all verifiable facts as a JSON array of
+strings.  Output ONLY valid JSON — no markdown fence, no prose.
+Example: ["Fact one.", "Fact two."]
+Call finish when done.
+"""
+
+[subagents.gres]
+thinking  = false
+tools     = false
+vision    = false
+gen_image = false
+
+# ── Worker 4: Shell operations ────────────────────────────────────────────────
+[[subagents]]
+name        = "shell_worker"
+role        = "atomic"
+provider    = "qwen_local"
+model       = "kwangsuklee/Nanbeige4.1-3B.Q4_K_M:latest"
+max_tokens  = 1024
+temperature = 0.0
+tools       = ["bash", "ls", "grep", "mkdir", "touch", "finish"]
+system_prompt = """
+You are a shell operations specialist.
+Execute the requested file-system or shell task using the available tools.
+Return only the relevant output or a one-sentence confirmation.
+Call finish when done.
+"""
+
+[subagents.gres]
+thinking  = false
+tools     = true
+vision    = false
+gen_image = false

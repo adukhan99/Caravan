@@ -1,0 +1,9 @@
+(executable
+ (name swarm)
+ (libraries
+  Caravan
+  CaravanTools
+  CaravanProviders
+  eio
+  eio_main
+  unix))

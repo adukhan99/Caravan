@@ -3,7 +3,10 @@ let () =
   let out = open_out "all_tools.ml" in
   Printf.fprintf out "let all_tools : Caravan.Tool.packed_tool list = [\n";
   Array.iter (fun f ->
-    if Filename.check_suffix f ".ml" && f <> "all_tools.ml" && f <> "gen_tools.ml" then
+    if Filename.check_suffix f ".ml" && f <> "all_tools.ml" && f <> "gen_tools.ml"
+       (* delegate.ml requires Eio net+clock at runtime; it is instantiated manually
+          via Delegate.make in the entrypoint and must NOT appear in the static list. *)
+       && f <> "delegate.ml" then
       let name = Filename.chop_suffix f ".ml" in
       let cap_name = String.capitalize_ascii name in
       let content =

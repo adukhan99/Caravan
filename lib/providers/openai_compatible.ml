@@ -130,6 +130,11 @@ let parse_complete_response body_str provider_name model =
     | `Null -> ""
     | s -> to_string s
   in
+  let extra_content =
+    match msg_json |> member "extra_content" with
+    | `Null -> None
+    | ec -> Some ec
+  in
   let finish = choice |> member "finish_reason" |> to_string_option in
   let tool_calls =
     match msg_json |> member "tool_calls" with
@@ -140,12 +145,17 @@ let parse_complete_response body_str provider_name model =
         let func = tc |> member "function" in
         let name = func |> member "name" |> to_string in
         let args = func |> member "arguments" |> to_string in
-        { id; name; args }
+        let tc_ec =
+          match tc |> member "extra_content" with
+          | `Null -> None
+          | ec -> Some ec
+        in
+        { id; name; args; extra_content = tc_ec }
       ) l)
     | _ -> None
   in
   let usage = parse_usage json in
-  let reply_msg = make_message ?tool_calls Assistant content in
+  let reply_msg = make_message ?tool_calls ?extra_content Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:provider_name ?finish_reason:finish ?usage reply_msg
 
 let complete net cfg ?model ?options ?tools msgs =
@@ -172,7 +182,8 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
   let headers  = Http.Header.of_list (("Accept", "text/event-stream") :: auth_headers cfg) in
   let body_str = Yojson.Safe.to_string (make_body cfg ?model ?options ?tools msgs ~stream:true) in
   let buf      = Buffer.create 4096 in
-  let tool_acc : (int, string * string * Buffer.t) Hashtbl.t = Hashtbl.create 4 in
+  let tool_acc : (int, string * string * Buffer.t * Yojson.Safe.t option) Hashtbl.t = Hashtbl.create 4 in
+  let extra_content_ref = ref None in
   let usage_ref = ref None in
   let result_ref = ref None in
   let client   = make_client net uri in
@@ -199,12 +210,12 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
             else begin
               let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
               let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-              Some (List.map (fun (_, (id, name, abuf)) ->
-                { id; name; args = Buffer.contents abuf }
+              Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
+                { id; name; args = Buffer.contents abuf; extra_content = tc_ec }
               ) sorted)
             end
           in
-          let reply = make_message ?tool_calls Assistant full in
+          let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
           result_ref := Some (wrap_result ~raw_response:full ~model:effective_model
             ~provider:cfg.provider_name ?usage:(!usage_ref) reply);
           raise End_of_file
@@ -218,6 +229,9 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
             let choices = json |> member "choices" in
             if choices <> `Null && choices <> `List [] then begin
               let delta = choices |> index 0 |> member "delta" in
+              (match delta |> member "extra_content" with
+               | `Null -> ()
+               | ec -> extra_content_ref := Some ec);
               (match delta |> member "content" with
                | `String token ->
                  Buffer.add_string buf token;
@@ -227,11 +241,11 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
                | `List tcs ->
                  List.iter (fun tc ->
                    let idx = tc |> member "index" |> to_int in
-                   let (id, name, abuf) =
+                   let (id, name, abuf, tc_ec) =
                      match Hashtbl.find_opt tool_acc idx with
                      | Some existing -> existing
                      | None ->
-                       let entry = ("", "", Buffer.create 64) in
+                       let entry = ("", "", Buffer.create 64, None) in
                        Hashtbl.add tool_acc idx entry;
                        entry
                      in
@@ -239,6 +253,11 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
                      match tc |> member "id" with
                      | `String s when s <> "" -> s
                      | _ -> id
+                   in
+                   let new_ec =
+                     match tc |> member "extra_content" with
+                     | `Null -> tc_ec
+                     | ec -> Some ec
                    in
                    let fn = tc |> member "function" in
                    let new_name =
@@ -249,7 +268,7 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
                    (match fn |> member "arguments" with
                     | `String s -> Buffer.add_string abuf s
                     | _ -> ());
-                   Hashtbl.replace tool_acc idx (new_id, new_name, abuf)
+                   Hashtbl.replace tool_acc idx (new_id, new_name, abuf, new_ec)
                  ) tcs
                | _ -> ())
             end
@@ -269,12 +288,12 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
       else begin
         let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
         let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-        Some (List.map (fun (_, (id, name, abuf)) ->
-          { id; name; args = Buffer.contents abuf }
+        Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
+          { id; name; args = Buffer.contents abuf; extra_content = tc_ec }
         ) sorted)
       end
     in
-    let reply = make_message ?tool_calls Assistant full in
+    let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
     wrap_result ~raw_response:full ~model:effective_model ~provider:cfg.provider_name
       ?usage:(!usage_ref) reply
 

@@ -1,0 +1,30 @@
+# ~/.caravan/config.toml  (or set CARAVAN_CONFIG to point here)
+# Homogeneous Agent Swarm Config
+# ─────────────────────────────────────────────────────────────────
+
+# ── Global defaults ──────────────────────────────────────────────
+stream          = true
+spinner.enabled = true
+spinner.verbose = true
+max_turns       = 20
+
+# ── Orchestrator ──────────────────────────────────────────────────
+# The primary planner. In a homogeneous swarm, the orchestrator
+# dynamically clones itself (using the same provider and model)
+# with task-specific instructions and tools.
+[orchestrator]
+provider      = "gemini"
+model         = "gemini-3.6-flash"
+api_key_env   = "GEMINI_API_KEY"          # env var that holds the key
+
+
+# ── Provider endpoints ────────────────────────────────────────────
+# Gemini's OpenAI-compatible endpoint
+[providers.gemini]
+base_url    = "https://generativelanguage.googleapis.com/v1beta/openai"
+api_key_env = "GEMINI_API_KEY"
+
+# Optional: Local Ollama (uncomment or edit [orchestrator] above to use)
+[providers.ollama]
+base_url    = "http://127.0.0.1:11434/v1"
+# No api_key_env needed for Ollama

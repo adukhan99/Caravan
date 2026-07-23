@@ -49,24 +49,32 @@ verbose = false
 # one verb is chosen at random on each invocation for a bit of personality. :)
 #
 # LLM reasoning
-thinking    = ["Thinking", "Pondering", "Mulling", "Reflecting", "Deliberating",
-               "Contemplating", "Cogitating", "Ruminating"]
+thinking = [
+    "Thinking",
+    "Pondering",
+    "Mulling",
+    "Reflecting",
+    "Deliberating",
+    "Contemplating",
+    "Cogitating",
+    "Ruminating",
+]
 # Summarisation
 summarizing = ["Summarizing", "Condensing", "Distilling", "Compressing"]
 # Shell
-bash        = ["Running", "Executing", "Invoking", "Launching"]
+bash = ["Running", "Executing", "Invoking", "Launching"]
 # File I/O
-read_file   = ["Reading", "Loading"]
-write_file  = ["Writing", "Saving"]
-grep        = ["Searching files", "Scanning", "Grepping"]
+read_file = ["Reading", "Loading"]
+write_file = ["Writing", "Saving"]
+grep = ["Searching files", "Scanning", "Grepping"]
 # Network
-fetch       = ["Fetching", "Downloading", "Retrieving"]
-web_fetch   = ["Fetching", "Downloading", "Retrieving"]
-web_search  = ["Searching the web", "Querying the web", "Scouring the internet"]
-web_read    = ["Reading page", "Parsing page"]
+fetch = ["Fetching", "Downloading", "Retrieving"]
+web_fetch = ["Fetching", "Downloading", "Retrieving"]
+web_search = ["Searching the web", "Querying the web", "Scouring the internet"]
+web_read = ["Reading page", "Parsing page"]
 # DB
-sql         = ["Querying", "Fetching rows"]
-redis       = ["Querying store", "Accessing cache"]
+sql = ["Querying", "Fetching rows"]
+redis = ["Querying store", "Accessing cache"]
 
 
 # --- Tool Settings ---

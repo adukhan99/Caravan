@@ -269,7 +269,7 @@ let%expect_test "session_summarise" =
     Format.printf "Content: %s\n" msg.Types.content
   );
   [%expect {|
-    ⠋ Summarizing...[KThis is a summary.
+    ⠋ Compressing...[KThis is a summary.
     History length: 1
     Role: System
     Content: [Conversation summary]: This is a summary.

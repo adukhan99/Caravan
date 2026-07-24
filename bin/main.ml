@@ -9,11 +9,13 @@ open Cmdliner
 (* --- Types --- *)
 
 type repl_state = {
-  mutable session       : Session.t;
-  mutable provider_name : string;
-  mutable model         : string;
-  mutable provider      : Provider.packed_provider;
-  mutable base_url      : string option;
+  mutable session          : Session.t;
+  mutable provider_name    : string;
+  mutable model            : string;
+  mutable provider         : Provider.packed_provider;
+  mutable base_url         : string option;
+  mutable total_tokens_in  : int;
+  mutable total_tokens_out : int;
 }
 
 (* --- Constants & Environment --- *)
@@ -40,28 +42,58 @@ let init_mcp () =
   end
 
 
-let slash_commands = [
-  "/model <name>",    "Switch the model";
-  "/provider <p> [u]", "Switch provider (ollama, openai, llama_cpp)";
-  "/system [text]",   "Set or clear the system prompt";
-  "/agent <task>",    "Start an autonomous agentic loop";
-  "/memory <n>",      "Set context window (0 = max)";
-  "/summarise",       "Summarize history to slim context window";
-  "/clear",           "Clear conversation history";
-  "/history",         "Print conversation history";
-  "/export [file]",   "Export session JSON to stdout or file";
-  "/models",          "List available models";
-  "/providers",       "List available providers";
-  "/tools",           "List available tools";
-  "/config",          "Show current session configuration";
-  "/temp <f>",        "Set temperature (0.0-2.0)";
-  "/top_p <f>",       "Set top_p (0.0-1.0)";
-  "/top_k <n>",       "Set top_k";
-  "/max_tokens <n>",  "Set max output tokens";
-  "/seed <n>",        "Set random seed";
-  "/help",            "Show this help";
-  "/quit",            "Exit Caravan";
+type help_group = {
+  title : string;
+  commands : (string * string * string option) list;
+}
+
+let help_groups = [
+  { title = "Chat";
+    commands = [
+      ("/agent <task>", "Let the AI work autonomously on a task",
+       Some "Example: /agent summarize the files in this directory");
+      ("/system [text]", "Set instructions for the AI's personality", None);
+      ("/clear", "Start a fresh conversation", None);
+    ] };
+  { title = "Model and Provider";
+    commands = [
+      ("/model <name>", "Switch AI model",
+       Some "Example: /model gpt-4o");
+      ("/provider <p> [url]", "Switch AI provider",
+       Some "Example: /provider openai");
+      ("/models", "Browse available models", None);
+      ("/providers", "List supported providers", None);
+    ] };
+  { title = "Tuning";
+    commands = [
+      ("/temp <0.0-2.0>", "Creativity level (higher = more creative)", None);
+      ("/memory <n>", "How many messages to remember (0 = unlimited)", None);
+      ("/summarise", "Compress conversation to save memory", None);
+    ] };
+  { title = "Session";
+    commands = [
+      ("/history", "Show conversation so far", None);
+      ("/export [file]", "Save conversation to a file", None);
+      ("/config", "Show current settings", None);
+    ] };
+  { title = "Exit";
+    commands = [
+      ("/quit", "Exit Caravan", None);
+    ] };
 ]
+
+let print_help_grouped groups =
+  List.iter (fun g ->
+    println_ansi (bold (yellow (Printf.sprintf "\n  %s" g.title)));
+    List.iter (fun (cmd, desc, ex) ->
+      println_ansi (Printf.sprintf "    %s  %s"
+        (cyan (Printf.sprintf "%-24s" cmd)) (dim desc));
+      match ex with
+      | Some e -> println_ansi (Printf.sprintf "      %s" (green e))
+      | None -> ()
+    ) g.commands
+  ) groups;
+  print_newline ()
 
 (* --- Tool & Provider Management --- *)
 
@@ -157,31 +189,36 @@ let handle_slash_command net clock st line =
     exit 0
 
   | ["/help"] | ["/?"] ->
-    print_help slash_commands
+    print_help_grouped help_groups
 
   | "/agent" :: rest ->
     let task = String.concat " " rest |> String.trim in
     if task = "" then usage "/agent" "<task description>"
     else begin
       println_ansi (bold (yellow (Printf.sprintf "\n  Starting agentic loop for: %s" task)));
+      let on_turn current max =
+        println_ansi (dim (Printf.sprintf "  -- Turn %d/%d --------" current max))
+      in
       (try
         let stream_enabled = Config.get_stream () in
         let result =
           if stream_enabled then
-            Agent.run_stream net clock st.session task ~on_token
+            Agent.run_stream ~on_turn net clock st.session task ~on_token
           else
-            Agent.run net clock st.session task
+            Agent.run ~on_turn net clock st.session task
         in
         match result with
         | Ok (new_sess, res) ->
           st.session <- new_sess;
           print_newline ();
-          println_ansi (bold (green "  ✓ Agent complete."));
+          println_ansi (green "╔═══════════════════════════════════════════════════════╗");
+          println_ansi (green "║  ✓ Agent completed task successfully!               ║");
+          println_ansi (green "╚═══════════════════════════════════════════════════════╝");
           println_ansi (dim (Monitor.format_usage res))
         | Error e ->
           println_ansi (red (Printf.sprintf "  [Agent Error]: %s" e))
       with exn ->
-        println_ansi (red (Printf.sprintf "  [Error]: %s" (Printexc.to_string exn))))
+        println_ansi (red (Printf.sprintf "  [Error]: %s" (Caravan_error.humanize exn))))
     end
 
   | "/model" :: rest ->
@@ -235,7 +272,7 @@ let handle_slash_command net clock st line =
          println_ansi (bold (green "  ✓ Context slimmed successfully."));
          println_ansi (cyan (Printf.sprintf "  [Summary]: %s" summary))
        with exn ->
-         println_ansi (red (Printf.sprintf "  Error summarizing: %s" (Printexc.to_string exn))))
+         println_ansi (red (Printf.sprintf "  Error summarizing: %s" (Caravan_error.humanize exn))))
     end
 
   | ["/clear"] ->
@@ -261,23 +298,63 @@ let handle_slash_command net clock st line =
          output_string oc (Yojson.Safe.pretty_to_string (Session.export_json st.session));
          close_out oc;
          println_ansi (yellow (Printf.sprintf "  ✓ Exported to %s" file))
-       with exn -> println_ansi (red (Printf.sprintf "  Error: %s" (Printexc.to_string exn))))
+       with exn -> println_ansi (red (Printf.sprintf "  Error: %s" (Caravan_error.humanize exn))))
      | [] -> print_endline (Yojson.Safe.pretty_to_string (Session.export_json st.session))
      | _ -> usage "/export" "[file]")
 
   | ["/models"] ->
     (try
       let models = Provider.list_models_packed net st.provider in
-      println_ansi (bold (yellow (Printf.sprintf "  Models on %s:" st.provider_name)));
-      List.iter (fun m ->
-        let mark = if m = st.model then green " ✓ " else dim "   " in
-        println_ansi (mark ^ white m)
-      ) models
-    with exn -> println_ansi (red (Printf.sprintf "  Error: %s" (Printexc.to_string exn))))
+      println_ansi (bold (yellow (Printf.sprintf "\n  Models on %s:" st.provider_name)));
+      List.iteri (fun i m ->
+        let mark = if m = st.model then green " > " else dim "   " in
+        let num = cyan (Printf.sprintf "[%d]" (i + 1)) in
+        println_ansi (Printf.sprintf "  %s %s%s" num mark (white m))
+      ) models;
+      if is_tty then begin
+        println_ansi (dim "\n  Enter a number to switch, or press Enter to cancel:");
+        (try
+          let input = String.trim (input_line stdin) in
+          if input <> "" then
+            match int_of_string_opt input with
+            | Some n when n >= 1 && n <= List.length models ->
+              let new_model = List.nth models (n - 1) in
+              st.model <- new_model;
+              let provider = make_any_provider st.provider_name new_model st.base_url in
+              st.provider <- provider;
+              st.session <- Session.with_provider
+                (Session.with_model st.session new_model) provider;
+              println_ansi (yellow (Printf.sprintf "  Switched to %s" new_model))
+            | _ -> println_ansi (red "  Invalid selection.")
+        with End_of_file -> ())
+      end
+    with exn ->
+      println_ansi (red (Caravan_error.humanize exn)))
 
   | ["/providers"] ->
-    println_ansi (bold (yellow "  Supported Providers:"));
-    List.iter (fun s -> println_ansi (Printf.sprintf "  - %s" s)) ["openai"; "ollama"; "llama_cpp"]
+    let providers = ["ollama"; "openai"; "llama_cpp"] in
+    println_ansi (bold (yellow "\n  Supported Providers:"));
+    List.iteri (fun i p ->
+      let mark = if p = st.provider_name then green " > " else dim "   " in
+      let num = cyan (Printf.sprintf "[%d]" (i + 1)) in
+      println_ansi (Printf.sprintf "  %s %s%s" num mark (white p))
+    ) providers;
+    if is_tty then begin
+      println_ansi (dim "\n  Enter a number to switch, or press Enter to cancel:");
+      (try
+        let input = String.trim (input_line stdin) in
+        if input <> "" then
+          match int_of_string_opt input with
+          | Some n when n >= 1 && n <= List.length providers ->
+            let new_provider = List.nth providers (n - 1) in
+            st.provider_name <- new_provider;
+            let provider = make_any_provider new_provider st.model st.base_url in
+            st.provider <- provider;
+            st.session <- Session.with_provider st.session provider;
+            println_ansi (yellow (Printf.sprintf "  Switched to provider %s" new_provider))
+          | _ -> println_ansi (red "  Invalid selection.")
+      with End_of_file -> ())
+    end
 
   | ["/tools"] ->
     let tools = Session.tools st.session in
@@ -327,12 +404,18 @@ let handle_slash_command net clock st line =
 
 let repl net clock st =
   let prompt () =
-    if is_tty then
-      print_ansi (Printf.sprintf "\n%s %s %s "
-        (blue (Printf.sprintf "[%s/%s]" st.provider_name st.model))
-        (cyan "›")
-        "")
-    else ();
+    if is_tty then begin
+      let turns = List.length (Session.history st.session) in
+      let status = render_status_bar
+        ~provider:st.provider_name
+        ~model:st.model
+        ~turns
+        ~tokens_in:st.total_tokens_in
+        ~tokens_out:st.total_tokens_out
+      in
+      println_ansi (Printf.sprintf "\n%s" status);
+      print_ansi (Printf.sprintf "%s " (cyan "›"))
+    end else ();
     flush stdout
   in
   let rec loop () =
@@ -350,6 +433,8 @@ let repl net clock st =
       handle_slash_command net clock st line;
       loop ()
     end else begin
+      if String.length line > 200 then
+        println_ansi (dim "  Tip: For complex autonomous tasks, try using /agent <task>\n");
       let verbose = Config.get_spinner_verbose () in
       if is_tty && verbose then
         println_ansi (Printf.sprintf "\n%s" (bold (green "Assistant:")));
@@ -362,6 +447,11 @@ let repl net clock st =
             Session.turn net clock st.session line
         in
         st.session <- new_sess;
+        (match result.usage with
+         | Some u ->
+           st.total_tokens_in  <- st.total_tokens_in + u.prompt_tokens;
+           st.total_tokens_out <- st.total_tokens_out + u.completion_tokens
+         | None -> ());
         if not stream_enabled then
           print_ansi (green result.value.content);
         if is_tty then begin
@@ -371,11 +461,7 @@ let repl net clock st =
         if not is_tty && not stream_enabled then print_endline result.value.content
       with exn ->
         if is_tty then print_newline ();
-        let msg = match exn with
-          | Failure s -> s
-          | _ -> Printexc.to_string exn
-        in
-        println_ansi (red (Printf.sprintf "\n  [Error]: %s" msg)));
+        println_ansi (red (Printf.sprintf "\n  [Error]: %s" (Caravan_error.humanize exn))));
       loop ()
     end
   in
@@ -401,7 +487,7 @@ let cmd_complete net clock ~model ~provider_name ~base_url ~system prompt_text =
     print_newline ();
     if is_tty then println_ansi (dim (Monitor.format_usage result))
   with exn ->
-    Printf.eprintf "[Caravan] Error: %s\n%!" (Printexc.to_string exn))
+    Printf.eprintf "[Caravan] Error: %s\n%!" (Caravan_error.humanize exn))
 
 let cmd_models net ~provider_name ~base_url ~model () =
   let provider = make_any_provider provider_name model base_url in
@@ -411,11 +497,7 @@ let cmd_models net ~provider_name ~base_url ~model () =
       print_endline (if m = model then "> " ^ m else "  " ^ m)
     ) models
   with exn ->
-    let msg = match exn with
-      | Failure s -> s
-      | _ -> Printexc.to_string exn
-    in
-    Printf.eprintf "[Caravan] Error: %s\n%!" msg;
+    Printf.eprintf "[Caravan] Error: %s\n%!" (Caravan_error.humanize exn);
     exit 1)
 
 (* --- CLI Configuration (Cmdliner) --- *)
@@ -441,30 +523,184 @@ let system_arg =
   let default = get_string "system" in
   Arg.(value & opt (some string) default & info ["s"; "system"] ~docv:"PROMPT" ~doc)
 
+let run_init () =
+  println_ansi (bold (cyan "\n  Welcome to Caravan! Let's get you set up.\n"));
+  println_ansi (bold (yellow "  Where is your AI running?"));
+  println_ansi (white "  1) Ollama (local, free - recommended for beginners)");
+  println_ansi (white "  2) OpenAI / GPT (cloud, requires API key)");
+  println_ansi (white "  3) llama.cpp (local, advanced)");
+  print_ansi (cyan "\n  Select [1-3] (default 1): ");
+  flush stdout;
+  let choice =
+    try
+      let line = String.trim (read_line ()) in
+      if line = "" then "1" else line
+    with End_of_file -> "1"
+  in
+  let provider, model, base_url, api_key_opt =
+    match choice with
+    | "2" ->
+      print_ansi (cyan "  Enter your OpenAI API Key (starts with sk-): ");
+      flush stdout;
+      let key = try String.trim (read_line ()) with End_of_file -> "" in
+      if key = "" || not (String.starts_with ~prefix:"sk-" key) then
+        println_ansi (yellow "  Warning: Key doesn't start with sk-. Saving anyway.");
+      ("openai", "gpt-4o", None, Some key)
+    | "3" ->
+      print_ansi (cyan "  Enter llama.cpp base URL (default http://127.0.0.1:8080/v1): ");
+      flush stdout;
+      let url = try String.trim (read_line ()) with End_of_file -> "" in
+      let base_url = if url = "" then "http://127.0.0.1:8080/v1" else url in
+      ("llama_cpp", "default", Some base_url, None)
+    | _ ->
+      let base_url = "http://127.0.0.1:11434/v1" in
+      let selected_model = ref "llama3.2" in
+      Eio_main.run (fun env ->
+        try
+          let provider = make_any_provider "ollama" "llama3.2" (Some base_url) in
+          let models = Provider.list_models_packed env#net provider in
+          if models <> [] then begin
+            println_ansi (green "\n  Connected to Ollama! Found models:");
+            List.iteri (fun i m ->
+              println_ansi (Printf.sprintf "  %s %s" (cyan (Printf.sprintf "[%d]" (i + 1))) (white m))
+            ) models;
+            print_ansi (cyan (Printf.sprintf "\n  Select model [1-%d] (default 1): " (List.length models)));
+            flush stdout;
+            try
+              let sel = String.trim (read_line ()) in
+              if sel <> "" then
+                match int_of_string_opt sel with
+                | Some n when n >= 1 && n <= List.length models ->
+                  selected_model := List.nth models (n - 1)
+                | _ -> ()
+              else selected_model := List.hd models
+            with End_of_file -> selected_model := List.hd models
+          end else ()
+        with exn ->
+          println_ansi (yellow "\n  Could not connect to Ollama at http://127.0.0.1:11434/v1");
+          println_ansi (dim "  Make sure Ollama is installed and running: https://ollama.com")
+      );
+      ("ollama", !selected_model, Some base_url, None)
+  in
+  let config_dir = Filename.dirname Config.config_path in
+  if not (Sys.file_exists config_dir) then (try Unix.mkdir config_dir 0o755 with _ -> ());
+  let oc = open_out Config.config_path in
+  Printf.fprintf oc "# Generated by caravan init\n";
+  Printf.fprintf oc "provider = \"%s\"\n" provider;
+  Printf.fprintf oc "model = \"%s\"\n" model;
+  (match base_url with Some u -> Printf.fprintf oc "base_url = \"%s\"\n" u | None -> ());
+  (match api_key_opt with Some k -> Printf.fprintf oc "api_key = \"%s\"\n" k | None -> ());
+  Printf.fprintf oc "stream = true\n";
+  close_out oc;
+  println_ansi (green (Printf.sprintf "\n  ✓ Saved configuration to %s" Config.config_path));
+  println_ansi (dim "  Run 'caravan' to start chatting!\n")
+
+let init_cmd =
+  let doc = "Interactive first-run setup wizard." in
+  let info = Cmd.info "init" ~doc in
+  Cmd.v info Term.(const run_init $ const ())
+
+let run_doctor () =
+  println_ansi (bold (cyan "\n  Caravan System Diagnostics\n"));
+  let checks_passed = ref true in
+
+  if Sys.file_exists Config.config_path then begin
+    (match Config.load_toml () with
+     | Some _ -> println_ansi (green "  ✓ Config file exists and valid TOML")
+     | None ->
+       checks_passed := false;
+       println_ansi (red (Printf.sprintf "  ✗ Config file at %s contains TOML syntax errors" Config.config_path)))
+  end else begin
+    checks_passed := false;
+    println_ansi (yellow (Printf.sprintf "  ⚠ Config file does not exist at %s (run 'caravan init')" Config.config_path))
+  end;
+
+  let provider_name = Config.get_string_opt (Some "CARAVAN_PROVIDER") "provider" |> Option.value ~default:"ollama" in
+  let model = Config.get_string_opt (Some "CARAVAN_MODEL") "model" |> Option.value ~default:"llama3.2" in
+  let base_url = Config.get_string_opt (Some "CARAVAN_BASE_URL") "base_url" in
+  if List.mem provider_name ["ollama"; "openai"; "llama_cpp"] then
+    println_ansi (green (Printf.sprintf "  ✓ Provider '%s' is supported" provider_name))
+  else begin
+    checks_passed := false;
+    println_ansi (red (Printf.sprintf "  ✗ Provider '%s' is unknown. Supported: ollama, openai, llama_cpp" provider_name))
+  end;
+
+  (match provider_name with
+   | "openai" ->
+     let key_opt = match Sys.getenv_opt "OPENAI_API_KEY" with
+       | Some k when k <> "" -> Some k
+       | _ -> Config.get_string "api_key"
+     in
+     (match key_opt with
+      | Some _ -> println_ansi (green "  ✓ OpenAI API key configured")
+      | None ->
+        checks_passed := false;
+        println_ansi (red "  ✗ OpenAI API key missing. Set OPENAI_API_KEY env var or api_key in config.toml"))
+   | "ollama" | "llama_cpp" ->
+     let default_url = if provider_name = "ollama" then "http://127.0.0.1:11434/v1" else "http://127.0.0.1:8080/v1" in
+     let url = Option.value ~default:default_url base_url in
+     Eio_main.run (fun env ->
+       try
+         let p = make_any_provider provider_name model base_url in
+         let models = Provider.list_models_packed env#net p in
+         println_ansi (green (Printf.sprintf "  ✓ %s endpoint reachable at %s (%d models)" provider_name url (List.length models)))
+       with exn ->
+         checks_passed := false;
+         println_ansi (red (Printf.sprintf "  ✗ Could not connect to %s at %s\n    Hint: %s" provider_name url (Caravan_error.humanize exn)))
+     )
+   | _ -> ());
+
+  let mcp_servers = Config.get_mcp_servers () in
+  if mcp_servers <> [] then begin
+    List.iter (fun (srv : Config.mcp_server_config) ->
+      let cmd_ok = Sys.command (Printf.sprintf "which %s >/dev/null 2>&1" (Filename.quote srv.command)) = 0 in
+      if cmd_ok then
+        println_ansi (green (Printf.sprintf "  ✓ MCP server '%s' command '%s' found in PATH" srv.name srv.command))
+      else begin
+        checks_passed := false;
+        println_ansi (red (Printf.sprintf "  ✗ MCP server '%s' command '%s' not found in PATH" srv.name srv.command))
+      end
+    ) mcp_servers
+  end;
+
+  print_newline ();
+  if !checks_passed then
+    println_ansi (bold (green "  All diagnostics passed! Caravan is ready.\n"))
+  else
+    println_ansi (bold (yellow "  Some issues were detected. Check hints above.\n"))
+
+let doctor_cmd =
+  let doc = "Run system and configuration diagnostics." in
+  let info = Cmd.info "doctor" ~doc in
+  Cmd.v info Term.(const run_doctor $ const ())
+
 let run_repl model provider_name base_url system =
   init_mcp ();
+  if is_tty && Config.is_first_run () then begin
+    println_ansi (yellow "  Notice: First time running Caravan? Run 'caravan init' for guided setup.\n")
+  end;
   Eio_main.run (fun env ->
     let net = env#net in
     let provider = make_any_provider provider_name model base_url in
     let sess = Session.create ~tools:(all_tools ()) model provider in
     let sess = match system with Some s -> Session.set_system sess s | None -> sess in
     let st = {
-      session      = sess;
+      session          = sess;
       provider_name;
       model;
       provider;
       base_url;
+      total_tokens_in  = 0;
+      total_tokens_out = 0;
     } in
     print_banner ();
     if is_tty then begin
-      println_ansi (Printf.sprintf "  %s %s  %s %s"
-        (bold (blue "Provider:")) (white provider_name)
-        (bold (blue "Model:"))    (white model));
-      (match system with
-       | Some s -> println_ansi (Printf.sprintf "  %s %s"
-                     (bold (yellow "System:")) (dim s))
-       | None -> ());
-      println_ansi (dim "  Type a message and press Enter. Use /help for commands.");
+      println_ansi (dim "  Just type a message and press Enter to chat.");
+      println_ansi (dim "  Try " ^ cyan "/help" ^ dim " for commands, or " ^
+                    cyan "/agent <task>" ^ dim " to let the AI work autonomously.");
+      println_ansi (Printf.sprintf "  %s %s   %s %s"
+        (dim "Using") (bold (white model))
+        (dim "on") (bold (white provider_name)));
       print_newline ()
     end;
     repl net env#clock st
@@ -510,6 +746,6 @@ let () =
   let default_cmd = Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg)
   in
   let cmd = Cmd.group ~default:default_cmd info
-    [ repl_cmd; complete_cmd; models_cmd ]
+    [ repl_cmd; complete_cmd; models_cmd; init_cmd; doctor_cmd ]
   in
   exit (Cmd.eval cmd)

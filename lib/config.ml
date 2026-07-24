@@ -18,6 +18,15 @@ let ensure_config_exists () =
       close_out oc
     with _ -> ()
 
+let is_first_run () =
+  not (Sys.file_exists config_path) ||
+  (try
+     let ic = open_in config_path in
+     let len = in_channel_length ic in
+     close_in ic;
+     len < 50
+   with _ -> true)
+
 let load_toml () =
   ensure_config_exists ();
   if Sys.file_exists config_path then

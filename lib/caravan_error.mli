@@ -10,5 +10,6 @@ type t =
   | Exception of string
 
 val to_string : t -> string
+val humanize : exn -> string
 val of_exn : exn -> t
 val safe_run : (unit -> 'a) -> ('a, t) result

@@ -104,11 +104,17 @@ let println_ansi s = print_endline s
 
 let print_banner () =
   if is_tty then begin
-    println_ansi (cyan "╔═════════════════════════════════════════════════╗");
-    println_ansi (cyan "║  "  ^ bold (white "Caravan") ^ white "   v0.1  —  Typed LLM Orchestration     " ^ cyan "║");
-    println_ansi (cyan "╚═════════════════════════════════════════════════╝");
+    println_ansi (cyan   "╔═══════════════════════════════════════════════════════╗");
+    println_ansi (cyan   "║  " ^ bold (white "🐫 Caravan") ^
+                  white  "  —  Your verifiable AI agent    —     " ^ cyan "║");
+    println_ansi (cyan   "╚═══════════════════════════════════════════════════════╝");
     print_newline ()
   end
+
+let render_status_bar ~provider ~model ~turns ~tokens_in ~tokens_out =
+  let left = Printf.sprintf " %s/%s " provider model in
+  let right = Printf.sprintf " Turn %d | in:%d out:%d tokens " turns tokens_in tokens_out in
+  dim (Printf.sprintf "── %s  %s ──" (blue left) (yellow right))
 
 let print_help cmds =
   println_ansi (bold (yellow " Slash Commands:"));

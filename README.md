@@ -19,18 +19,17 @@ Inspired by LangChain but designed for the OCaml ecosystem, Caravan models LLM i
 
 ## Installation
 
-Caravan requires OCaml 5.0+ and Dune.
-
 ```bash
-# Clone the repository
+# Automated Quick-Start
+curl -fsSL https://raw.githubusercontent.com/adukhan99/Caravan/main/scripts/install.sh | bash
+dune exec caravan -- init
+
+# Or manual installation (requires OCaml 5.0+ and Dune)
 git clone https://github.com/adukhan99/Caravan.git
 cd Caravan
-
-# Install dependencies
-opam install . --deps-only
-
-# Build the project
+opam install . --deps-only --with-test --with-doc --with-dev-setup -y
 dune build
+dune exec caravan -- init
 ```
 
 ## Quick Start: The Library

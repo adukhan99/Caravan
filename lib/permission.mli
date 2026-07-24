@@ -7,3 +7,4 @@ type permission_mode =
 val check : permission_mode -> string -> string -> bool
 val ask_user_approval : string -> string -> bool
 val default_policy : unit -> permission_mode
+val reset_session_override : unit -> unit

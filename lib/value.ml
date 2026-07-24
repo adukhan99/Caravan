@@ -78,7 +78,6 @@ let rec of_yojson : Yojson.Safe.t -> t = function
     (match int_of_string_opt s with
      | Some i -> Int i
      | None -> String s)
-  | other -> String (Yojson.Safe.to_string other)
 
 let rec to_yojson : t -> Yojson.Safe.t = function
   | Null -> `Null

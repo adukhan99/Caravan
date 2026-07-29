@@ -67,27 +67,28 @@ let get_string_opt env_var toml_key =
                | _ -> get_string toml_key)
   | None -> get_string toml_key
 
-let get_bool key =
+let get_bool ?(path=[]) key =
   match Lazy.force toml_ast with
   | None -> None
   | Some ast ->
-    try Some (Otoml.find ast Otoml.get_boolean [key])
+    try Some (Otoml.find ast Otoml.get_boolean (path @ [key]))
     with _ -> None
 
-let get_bool_opt env_var toml_key =
+let get_bool_opt ?path env_var toml_key =
   let of_env_str = function
     | "true" | "1" | "yes" -> Some true
     | "false" | "0" | "no" -> Some false
     | _ -> None
   in
+  let lookup () = get_bool ?path toml_key in
   match env_var with
   | Some e -> (match Sys.getenv_opt e with
                | Some v when v <> "" ->
                  (match of_env_str (String.lowercase_ascii v) with
                   | Some _ as r -> r
-                  | None -> get_bool toml_key)
-               | _ -> get_bool toml_key)
-  | None -> get_bool toml_key
+                  | None -> lookup ())
+               | _ -> lookup ())
+  | None -> lookup ()
 
 type mcp_server_config = {
   name      : string;
@@ -294,10 +295,10 @@ let get_stream () =
   get_bool_opt (Some "CARAVAN_STREAM") "stream" |> Option.value ~default:true
 
 let get_spinner_enabled () =
-  get_bool_opt (Some "CARAVAN_SPINNER") "spinner.enabled" |> Option.value ~default:true
+  get_bool_opt ~path:["spinner"] (Some "CARAVAN_SPINNER") "enabled" |> Option.value ~default:true
 
 let get_spinner_verbose () =
-  get_bool_opt (Some "CARAVAN_SPINNER_VERBOSE") "spinner.verbose" |> Option.value ~default:false
+  get_bool_opt ~path:["spinner"] (Some "CARAVAN_SPINNER_VERBOSE") "verbose" |> Option.value ~default:false
 
 (** Read the TOML [spinner.<tool>] key as a string or array of strings. *)
 let get_spinner_verbs tool_name =

@@ -589,7 +589,7 @@ let run_init () =
   Printf.fprintf oc "provider = \"%s\"\n" provider;
   Printf.fprintf oc "model = \"%s\"\n" model;
   (match base_url with Some u -> Printf.fprintf oc "base_url = \"%s\"\n" u | None -> ());
-  (match api_key_opt with Some k -> Printf.fprintf oc "api_key = \"%s\"\n" k | None -> ());
+  (match api_key_opt with Some k -> Printf.fprintf oc "openai_api_key = \"%s\"\n" k | None -> ());
   Printf.fprintf oc "stream = true\n";
   close_out oc;
   println_ansi (green (Printf.sprintf "\n  ✓ Saved configuration to %s" Config.config_path));
@@ -629,7 +629,7 @@ let run_doctor () =
    | "openai" ->
      let key_opt = match Sys.getenv_opt "OPENAI_API_KEY" with
        | Some k when k <> "" -> Some k
-       | _ -> Config.get_string "api_key"
+       | _ -> Config.get_string "openai_api_key"
      in
      (match key_opt with
       | Some _ -> println_ansi (green "  ✓ OpenAI API key configured")

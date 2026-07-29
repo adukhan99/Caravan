@@ -1,0 +1,39 @@
+# ~/.caravan/config.toml  (or set CARAVAN_CONFIG=/path/to/this/file)
+# Single-Endpoint Config — one URL, one provider, one model
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# This is the simplest possible Caravan configuration.
+# Copy it to ~/.caravan/config.toml and fill in your details, then run:
+#
+#   caravan
+#
+# ── Provider ──────────────────────────────────────────────────────────────────
+# Choose one of: "openai" | "ollama" | "llama_cpp"
+provider = "openai"
+
+# ── Model ─────────────────────────────────────────────────────────────────────
+model = "gpt-4o-mini"
+
+# ── Endpoint ──────────────────────────────────────────────────────────────────
+# The base URL of the OpenAI-compatible API.
+# Defaults are shown; uncomment and change only if using a custom endpoint.
+#
+#   OpenAI (default):  https://api.openai.com/v1
+#   Ollama (local):    http://127.0.0.1:11434/v1
+#   llama.cpp (local): http://127.0.0.1:8080/v1
+#   Gemini compat:     https://generativelanguage.googleapis.com/v1beta/openai
+#
+# base_url = "https://api.openai.com/v1"
+
+# ── API Key ───────────────────────────────────────────────────────────────────
+# Recommended: set the OPENAI_API_KEY environment variable instead of storing
+# the key here.  If you prefer a file-based secret, uncomment the line below.
+# Never commit this file to version control with a real key in it.
+#
+# openai_api_key = "sk-..."
+
+# ── Global Options ────────────────────────────────────────────────────────────
+stream          = true   # stream tokens as they arrive
+spinner.enabled = true   # show a spinner while waiting
+spinner.verbose = false  # print tool call details
+max_turns       = 20     # agentic loop turn limit

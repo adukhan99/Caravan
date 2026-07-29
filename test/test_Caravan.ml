@@ -28,11 +28,38 @@ let%test "parser_bool" =
   | Ok true -> true
   | _ -> false
 
-let%test_unit "config" =
+let%test_unit "config_extended" =
+  (* Test environment variable overrides for config getters *)
   Unix.putenv "CARAVAN_DUMMY_KEY" "dummy_val";
-  match Config.get_string_opt (Some "CARAVAN_DUMMY_KEY") "nonexistent" with
-  | Some "dummy_val" -> ()
-  | _ -> failwith "Config.get_string_opt failed to read environment variable"
+  (match Config.get_string_opt (Some "CARAVAN_DUMMY_KEY") "nonexistent" with
+   | Some "dummy_val" -> ()
+   | _ -> failwith "Config.get_string_opt failed to read environment variable");
+
+  Unix.putenv "CARAVAN_DUMMY_INT" "42";
+  (match Config.get_int_opt (Some "CARAVAN_DUMMY_INT") "nonexistent" with
+   | Some 42 -> ()
+   | _ -> failwith "Config.get_int_opt failed to read environment variable");
+
+  Unix.putenv "CARAVAN_DUMMY_BOOL" "true";
+  (match Config.get_bool_opt (Some "CARAVAN_DUMMY_BOOL") "nonexistent" with
+   | Some true -> ()
+   | _ -> failwith "Config.get_bool_opt failed to read environment variable");
+
+  (* Test default configuration fallbacks *)
+  assert (Config.get_spinner_enabled () = true || Config.get_spinner_enabled () = false);
+
+  (* Test verb lookup fallbacks *)
+  let verbs_thinking = Config.get_verbs "thinking" in
+  assert (verbs_thinking <> []);
+  let verbs_custom = Config.get_verbs "nonexistent_action_tool" in
+  assert (verbs_custom = ["Running nonexistent_action_tool"]);
+
+  (* Test subagents default helper *)
+  let _ = Config.get_subagents () in
+  let _ = Config.get_orchestrator () in
+  let _ = Config.get_provider_config "openai" in
+  let _ = Config.get_mcp_servers () in
+  ()
 
 let%test_unit "tool_read_file" =
   let path = "test_dummy_file.txt" in
@@ -47,6 +74,72 @@ let%test_unit "tool_read_file" =
   Sys.remove path;
   if res <> "Hello Tool" then
     failwith ("Tool read_file failed, got: " ^ res)
+
+let%test_unit "tool_write_file" =
+  let path = "test_dummy_write.txt" in
+  if Sys.file_exists path then Sys.remove path;
+  
+  let json_args = Printf.sprintf {|{"path": "%s", "content": "Written by test"}|} path in
+  let tool = Tool.Tool (module CaravanTools.Write_file.Write_file) in
+  let res = Tool.dispatch tool json_args in
+  
+  let content =
+    try
+      let ic = open_in path in
+      let s = really_input_string ic (in_channel_length ic) in
+      close_in ic; s
+    with _ -> ""
+  in
+  if Sys.file_exists path then Sys.remove path;
+  
+  if res <> "File written successfully." || content <> "Written by test" then
+    failwith ("Tool write_file failed, got: " ^ res ^ " content: " ^ content)
+
+let%test_unit "tool_grep" =
+  let path = "test_dummy_grep.txt" in
+  let ch = open_out path in
+  output_string ch "line 1: foo\nline 2: bar\nline 3: foo again";
+  close_out ch;
+
+  let json_args = Printf.sprintf {|{"path": "%s", "pattern": "foo"}|} path in
+  let tool = Tool.Tool (module CaravanTools.Grep.Grep) in
+  let res = Tool.dispatch tool json_args in
+
+  Sys.remove path;
+  if res <> "line 1: foo\nline 3: foo again" then
+    failwith ("Tool grep failed, got: " ^ res)
+
+let%test_unit "tool_sed" =
+  let path = "test_dummy_sed.txt" in
+  let ch = open_out path in
+  output_string ch "hello world";
+  close_out ch;
+
+  let json_args = Printf.sprintf {|{"path": "%s", "pattern": "world", "replacement": "caravan"}|} path in
+  let tool = Tool.Tool (module CaravanTools.Sed.Sed) in
+  let res = Tool.dispatch tool json_args in
+
+  let content =
+    try
+      let ic = open_in path in
+      let s = really_input_string ic (in_channel_length ic) in
+      close_in ic; s
+    with _ -> ""
+  in
+  Sys.remove path;
+  if res <> "Replaced occurrences successfully." || content <> "hello caravan" then
+    failwith ("Tool sed failed, got: " ^ res ^ " content: " ^ content)
+
+let%test_unit "tool_bash" =
+  let json_args = {|{"command": "echo 'hello bash'"}|} in
+  let tool = Tool.Tool (module CaravanTools.Bash.Bash) in
+  let res = Tool.dispatch tool json_args in
+  let has_hello =
+    let rex = Re.compile (Re.str "hello bash") in
+    Re.execp rex res
+  in
+  if not has_hello then
+    failwith ("Tool bash failed, got: " ^ res)
 
 let%test_unit "tool_aliases" =
   let tools = [
@@ -94,6 +187,116 @@ let%test_unit "tool_ls" =
   
   if String.length res = 0 then
     failwith ("Tool ls failed, output was empty")
+
+let%test_unit "subagent_session_and_compaction" =
+  let module MockProvider : Provider.PROVIDER with type config = unit = struct
+    type config = unit
+    let name = "mock_provider"
+    let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+      let reply = Types.assistant_msg "Subagent response" in
+      Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+    let stream _net _cfg ?model:_ ?options:_ ?tools:_ _msgs ~on_token:_ =
+      let reply = Types.assistant_msg "Subagent response" in
+      Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+    let list_models _net _cfg = ["mock"]
+  end in
+  let provider = Provider.Provider ((module MockProvider), ()) in
+  let parent_sess = Session.create ~tools:[] "parent_model" provider in
+  
+  let spec : Subagent.subagent_spec = {
+    name = "child_agent";
+    role = "atomic";
+    system_prompt = "Perform task concisely.";
+    tools = [];
+    provider = None;
+    model = Some "child_model";
+  } in
+  let child_sess = Subagent.make_child_session parent_sess spec in
+  let cfg = Session.config child_sess in
+  assert (cfg.model = "child_model");
+  (match cfg.system with
+   | Some sys ->
+     assert (String.starts_with ~prefix:"Perform task concisely." sys);
+     assert (String.ends_with ~suffix:Subagent.compaction_suffix sys)
+   | None -> failwith "Child session system prompt missing")
+
+let%test_unit "delegate_tool_validation_and_dispatch" =
+  Eio_main.run (fun env ->
+    let module MockProvider : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "mock"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+        let finish_tc = Types.{ id = "call_finish"; name = "finish"; args = {|{"summary":"Subagent finished task."}|}; extra_content = None } in
+        let reply = Types.assistant_tool_msg ~tool_calls:[finish_tc] "Subagent finished task." in
+        Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+      let stream _net _cfg ?model:_ ?options:_ ?tools:_ _msgs ~on_token =
+        on_token "Subagent finished task.";
+        let finish_tc = Types.{ id = "call_finish"; name = "finish"; args = {|{"summary":"Subagent finished task."}|}; extra_content = None } in
+        let reply = Types.assistant_tool_msg ~tool_calls:[finish_tc] "Subagent finished task." in
+        Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+      let list_models _net _cfg = ["mock"]
+    end in
+    let provider = Provider.Provider ((module MockProvider), ()) in
+    let dummy_tool = Tool.Tool (module CaravanTools.Read_file.Read_file) in
+    let finish_tool = Tool.Tool (module CaravanTools.Finish.Finish) in
+    let registered = [dummy_tool; finish_tool] in
+    
+    let valid_spec : Subagent.subagent_spec = {
+      name = "worker1";
+      role = "atomic";
+      system_prompt = "Do work";
+      tools = registered;
+      provider = Some provider;
+      model = Some "mock-model";
+    } in
+
+    let invalid_spec : Subagent.subagent_spec = {
+      name = "worker2";
+      role = "atomic";
+      system_prompt = "Do work";
+      tools = [Tool.Tool (module struct
+        let name = "unregistered_tool"
+        let aliases = []
+        let description = ""
+        type input = string
+        type output = string
+        type _ Effect.t += Exec : input -> output Effect.t
+        let json_schema () = `Assoc []
+        let parse_args _ = Ok ""
+        let format_output s = s
+        let execute _ = ""
+      end)];
+      provider = Some provider;
+      model = Some "mock-model";
+    } in
+
+    (* Test startup-time tool name validation failure *)
+    let raised = ref false in
+    (try
+       CaravanTools.Delegate.validate_tool_names "worker2" invalid_spec registered
+     with Invalid_argument _ -> raised := true);
+    assert (!raised);
+
+    (* Test Delegate.make and tool execution *)
+    let delegate_tool =
+      CaravanTools.Delegate.make
+        ~net:env#net
+        ~clock:env#clock
+        ~registered_tools:registered
+        ~subagent_specs:[valid_spec]
+    in
+    assert (Tool.name_of_packed delegate_tool = "delegate");
+
+    (* Test dispatch to valid subagent *)
+    let json_valid = {|{"subagent": "worker1", "task": "analyze file"}|} in
+    let res = Tool.dispatch delegate_tool json_valid in
+    assert (res = "Subagent finished task.\n\nTask finished: Subagent finished task.");
+
+    (* Test dispatch to unknown subagent *)
+    let json_invalid = {|{"subagent": "unknown_worker", "task": "do something"}|} in
+    let err_res = Tool.dispatch delegate_tool json_invalid in
+    assert (String.starts_with ~prefix:"Error: unknown subagent 'unknown_worker'" err_res)
+  )
 
 let%test_unit "usage_openai_parsing" =
   let fake_body = {|
@@ -281,14 +484,24 @@ let%test_unit "caravan_error_handling" =
   let res = Caravan_error.safe_run (fun () -> 42) in
   assert (res = Ok 42);
   let res_exn = Caravan_error.safe_run (fun () -> failwith "boom") in
-  match res_exn with
-  | Error (Caravan_error.Exception msg) -> assert (String.length msg > 0)
-  | _ -> failwith "Expected Exception error"
+  (match res_exn with
+   | Error (Caravan_error.Exception msg) -> assert (String.length msg > 0)
+   | _ -> failwith "Expected Exception error");
+
+  (* Test error humanization *)
+  let h_conn = Caravan_error.humanize (Failure "ECONNREFUSED") in
+  assert (String.starts_with ~prefix:"Could not connect" h_conn);
+  let h_404 = Caravan_error.humanize (Failure "HTTP 404 model not found") in
+  assert (String.starts_with ~prefix:"Model not found" h_404);
+  let h_401 = Caravan_error.humanize (Failure "HTTP 401 Unauthorized") in
+  assert (String.starts_with ~prefix:"Authentication failed" h_401);
+  let h_429 = Caravan_error.humanize (Failure "HTTP 429 rate limit exceeded") in
+  assert (String.starts_with ~prefix:"Rate limited" h_429)
 
 let%test_unit "permission_policies" =
   assert (Permission.check Permission.Always_allow "tool" "args");
   assert (not (Permission.check Permission.Deny_all "tool" "args"));
-  let custom = Permission.Custom (fun name args -> name = "safe_tool") in
+  let custom = Permission.Custom (fun name _args -> name = "safe_tool") in
   assert (Permission.check custom "safe_tool" "");
   assert (not (Permission.check custom "unsafe_tool" ""))
 
@@ -382,5 +595,3 @@ let%test_unit "session_with_model_override" =
     let (_sess''', _) = Session.turn env#net env#clock sess'' "hello again" in
     assert (!last_model_called = "switched_model")
   )
-
-

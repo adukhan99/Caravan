@@ -19,6 +19,8 @@ type subagent_spec = {
   (** [Some m] specifies the target model name to run. [None] inherits. *)
 }
 
+val make_child_session : Session.t -> subagent_spec -> Session.t
+
 val delegate :
   _ Eio.Net.t ->
   _ Eio.Time.clock ->

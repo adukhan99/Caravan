@@ -1,10 +1,12 @@
 open Types
 
 type config = {
-  model       : string;
-  system      : string option;
-  options     : gen_options;
-  memory_size : int;
+  model               : string;
+  system              : string option;
+  options             : gen_options;
+  memory_size         : int;
+  max_tool_output_len : int option;
+  auto_summarize      : bool;
 }
 
 val default_config : string -> config
@@ -15,6 +17,8 @@ val create : ?config:(string -> config) -> ?tools:Tool.packed_tool list -> strin
 
 val set_system : t -> string -> t
 val set_memory_size : t -> int -> t
+val set_max_tool_output_len : t -> int option -> t
+val set_auto_summarize : t -> bool -> t
 val set_options : t -> (gen_options -> gen_options) -> t
 val clear : t -> t
 val add_messages : t -> chat_message list -> t
@@ -22,13 +26,14 @@ val with_provider : t -> Provider.packed_provider -> t
 val tools : t -> Tool.packed_tool list
 val config : t -> config
 val provider : t -> Provider.packed_provider
+val turn_idx : t -> int
 val with_model : t -> string -> t
 
 val history : t -> chat_message list
 val history_for_llm : t -> chat_message list
 
-val run_conversations : _ Eio.Net.t -> _ Eio.Time.clock -> t -> t * chat_message result_with_meta
-val run_conversations_stream : _ Eio.Net.t -> _ Eio.Time.clock -> t -> on_token:(string -> unit) -> t * chat_message result_with_meta
+val run_conversations : ?max_turns:int -> ?on_turn:(int -> int -> unit) -> _ Eio.Net.t -> _ Eio.Time.clock -> t -> t * chat_message result_with_meta
+val run_conversations_stream : ?max_turns:int -> ?on_turn:(int -> int -> unit) -> _ Eio.Net.t -> _ Eio.Time.clock -> t -> on_token:(string -> unit) -> t * chat_message result_with_meta
 
 val turn : _ Eio.Net.t -> _ Eio.Time.clock -> t -> string -> t * chat_message result_with_meta
 val turn_stream : _ Eio.Net.t -> _ Eio.Time.clock -> t -> string -> on_token:(string -> unit) -> t * chat_message result_with_meta

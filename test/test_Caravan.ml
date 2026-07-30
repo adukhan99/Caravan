@@ -595,3 +595,117 @@ let%test_unit "session_with_model_override" =
     let (_sess''', _) = Session.turn env#net env#clock sess'' "hello again" in
     assert (!last_model_called = "switched_model")
   )
+
+let%test_unit "tool_output_truncation_for_context" =
+  Eio_main.run (fun _env ->
+    let module DummyProvider : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "dummy"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+        Types.wrap_result ~raw_response:"ok" ~model:"dummy" ~provider:"dummy" (Types.assistant_msg "ok")
+      let stream _net _cfg ?model:_ ?options:_ ?tools:_ _msgs ~on_token:_ =
+        Types.wrap_result ~raw_response:"ok" ~model:"dummy" ~provider:"dummy" (Types.assistant_msg "ok")
+      let list_models _net _cfg = ["dummy"]
+    end in
+    let provider = Provider.Provider ((module DummyProvider), ()) in
+    let sess = Session.create ~tools:[] "dummy" provider in
+    let sess = Session.set_max_tool_output_len sess (Some 50) in
+    let long_tool_output = String.make 500 'A' in
+    let messages = [
+      Types.user_msg "Run bash tool";
+      Types.assistant_msg "Running bash";
+      Types.tool_msg "call_1" long_tool_output;
+      Types.user_msg "What next?";
+      Types.assistant_msg "I will check";
+      Types.tool_msg "call_2" "short";
+    ] in
+    let sess = Session.add_messages sess messages in
+    let llm_hist = Session.history_for_llm sess in
+    (* Long tool message at index 2 (older than 2 most recent messages) should be truncated *)
+    let old_tool_msg = List.find (fun (m : Types.chat_message) ->
+      match m.role with Types.Tool "call_1" -> true | _ -> false
+    ) llm_hist in
+    assert (String.length old_tool_msg.content < 200);
+    assert (String.contains old_tool_msg.content 'A');
+    let has_omitted = Re.execp (Re.compile (Re.str "bytes omitted")) old_tool_msg.content in
+    assert has_omitted
+  )
+
+let%test_unit "summarize_tool_and_session_compaction" =
+  Eio_main.run (fun env ->
+    let called = ref false in
+    let module MockSumProvider : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "mock_sum"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+        if not !called then begin
+          called := true;
+          let sum_tc = Types.{ id = "sum_1"; name = "summarize"; args = {|{"reason": "clear space"}|}; extra_content = None } in
+          let reply = Types.assistant_tool_msg ~tool_calls:[sum_tc] "Compressing history..." in
+          Types.wrap_result ~raw_response:"ok" ~model:"mock" ~provider:"mock" reply
+        end else
+          let reply = Types.assistant_msg "Summary of key points." in
+          Types.wrap_result ~raw_response:"ok" ~model:"mock" ~provider:"mock" reply
+
+      let stream _net _cfg ?model ?options ?tools msgs ~on_token:_ =
+        complete _net _cfg ?model ?options ?tools msgs
+      let list_models _net _cfg = ["mock_sum"]
+    end in
+    let provider = Provider.Provider ((module MockSumProvider), ()) in
+    let sum_tool = Tool.Tool (module CaravanTools.Summarize.Summarize) in
+    let sess = Session.create ~tools:[sum_tool] "mock" provider in
+    let (sess', _) = Session.turn env#net env#clock sess "hello" in
+    let hist = Session.history sess' in
+    assert (List.length hist > 0);
+    let has_sum_header = List.exists (fun (m : Types.chat_message) ->
+      String.starts_with ~prefix:"[Conversation summary]:" m.content
+    ) hist in
+    assert has_sum_header
+  )
+
+let%test_unit "agent_turn_increment_and_max_turns" =
+  Eio_main.run (fun env ->
+    let turn_calls = ref [] in
+    let call_count = ref 0 in
+    let finish_tool = Tool.Tool (module CaravanTools.Finish.Finish) in
+    let read_tool = Tool.Tool (module CaravanTools.Read_file.Read_file) in
+    let module MultiTurnProvider : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "multi_turn"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+        incr call_count;
+        if !call_count < 3 then
+          let tc = Types.{ id = Printf.sprintf "call_%d" !call_count; name = "read_file"; args = {|{"path": "dune"}|}; extra_content = None } in
+          let reply = Types.assistant_tool_msg ~tool_calls:[tc] "Reading file..." in
+          Types.wrap_result ~raw_response:"ok" ~model:"multi" ~provider:"multi" reply
+        else
+          let tc = Types.{ id = "fin"; name = "finish"; args = {|{"summary": "Done three turns"}|}; extra_content = None } in
+          let reply = Types.assistant_tool_msg ~tool_calls:[tc] "Finished" in
+          Types.wrap_result ~raw_response:"ok" ~model:"multi" ~provider:"multi" reply
+
+      let stream _net _cfg ?model:_ ?options:_ ?tools:_ msgs ~on_token:_ =
+        complete _net _cfg msgs
+      let list_models _net _cfg = ["multi_turn"]
+    end in
+    let provider = Provider.Provider ((module MultiTurnProvider), ()) in
+    let sess = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
+    
+    let on_turn current max = turn_calls := (current, max) :: !turn_calls in
+    let agent_cfg = Agent.{ max_turns = 5; continue_prompt = "continue" } in
+    let res = Agent.run ~config:agent_cfg ~on_turn env#net env#clock sess "Execute multi-turn task" in
+    (match res with
+     | Ok (final_sess, _meta) ->
+       assert (Session.turn_idx final_sess = 3);
+       assert (List.rev !turn_calls = [(1, 5); (2, 5); (3, 5)])
+     | Error msg -> failwith ("Agent.run failed: " ^ msg));
+
+    (* Test max_turns limit enforcement *)
+    call_count := 0;
+    turn_calls := [];
+    let sess2 = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
+    let agent_cfg_low = Agent.{ max_turns = 2; continue_prompt = "continue" } in
+    let res_low = Agent.run ~config:agent_cfg_low ~on_turn env#net env#clock sess2 "Task max turns test" in
+    (match res_low with
+     | Error "Maximum turns reached without completion." -> ()
+     | _ -> failwith "Expected max turns error")
+  )

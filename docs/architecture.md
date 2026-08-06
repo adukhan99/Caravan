@@ -1,6 +1,6 @@
 # Caravan Project Architecture
 
-This document provides a high-level overview of the Caravan project structure and how the different components interact to create an agentic loop.
+This document provides a high-level overview of the Caravan framework architecture and component interactions.
 
 ```mermaid
 flowchart TB
@@ -13,8 +13,8 @@ flowchart TB
 
     subgraph Orchestrator ["The Brain (lib/)"]
         Agent["agent.ml<br/>(Agentic Loop)"]
-        Session["session.ml<br/>(History)"]
-        Memory["memory.ml<br/>(Context)"]
+        Session["session.ml<br/>(History & Context)"]
+        Memory["memory.ml<br/>(Context Compaction)"]
         Parser["parser.ml<br/>(Output Logic)"]
     end
 
@@ -26,12 +26,12 @@ flowchart TB
     subgraph Interface ["Pluggable Backends"]
         direction LR
         Providers["<b>Providers</b><br/>(lib/providers/)<br/>OpenAI, Ollama, Llama.cpp"]
-        Tools["<b>Tools</b><br/>(lib/tools/)<br/>FS, Shell, Web, Search"]
+        Tools["<b>Tools</b><br/>(lib/tools/)<br/>FS, Shell, Web, Delegate"]
     end
 
     subgraph Settings ["Configuration"]
-        TOML["~/.caravan/config.toml"]
-        Config["lib/config.ml"]
+        TOML["config.toml<br/>(Root & [orchestrator])"]
+        Config["lib/config.ml<br/>(Fallback Resolver)"]
     end
 
     %% Connections
@@ -68,9 +68,10 @@ flowchart TB
 
 ## Key Components
 
-- **Agentic Loop**: The core recursive engine that manages turns between the user, the LLM, and tool execution.
-- **Providers**: Standardized interface for different LLM backends.
-- **Tools**: Atomic capabilities that the agent can "call" to interact with the real world (filesystem, network, etc.).
-  - **delegate**: a new tool that spawns a local subagent to run an isolated task. Usage: `delegate { "subagent": "<name>", "task": "<description>" }`. Configurable via the `spinner` settings for progress verbs.
-- **Session/Memory**: Maintains the state and context of the conversation. Decoupled using OCaml 5 first-class modules (`Memory.packed_memory`) to support pluggable backends such as `Buffer` (local sliding-window buffer), `Redis_store` (externalized inter-agent/multi-process shared context), and `Hierarchical` (automatic LLM-powered context compression to prevent context blow-up).
-- **Parser**: Responsible for extracting structured tool calls from raw LLM text responses.
+- **Agentic Loop (`lib/agent.ml`)**: Autonomous engine executing tool-calling turns until completion or max turns limit. Automatically recognizes direct text responses without tool calls to prevent infinite looping.
+- **Config Resolver (`lib/config.ml`)**: Centralized configuration resolver supporting root TOML settings, `[orchestrator]` tables, environment variables, and fallback defaults.
+- **Providers (`lib/providers/`)**: Pluggable implementations for OpenAI, local Ollama, llama.cpp, and generic OpenAI-compatible endpoints.
+- **Tools (`lib/tools/`)**: Modular capabilities available to agents (e.g. `read_file`, `write_file`, `bash`, `delegate`, `finish`).
+  - **`delegate`**: Spawns cold-start subagents with isolated context and validated toolsets.
+- **Session & Memory (`lib/session.ml`, `lib/memory.ml`)**: Decoupled state management supporting sliding-window buffers, Redis shared stores, and automatic context compaction.
+- **Parser (`lib/parser.ml`)**: Type-safe output parsing and JSON combinators.

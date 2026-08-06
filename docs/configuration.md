@@ -1,24 +1,53 @@
 # Configuration Guide
 
-Caravan can be configured via a TOML file located at `~/.caravan/config.toml` (or `./.caravan/config.toml` on Windows if `HOME` is not set), environment variables, or command-line flags.
+Caravan can be configured via a TOML file located at `~/.caravan/config.toml` (or custom path via `CARAVAN_CONFIG`), environment variables, or command-line flags.
 
-## Example Config
+## TOML Config Structure
 
-For a complete list of all supported options, standard formats, and inline comments, see the annotated [example_config.toml](example_config.toml).
+Configuration settings can be defined either at the top-level or scoped within an `[orchestrator]` section block for clean organization.
 
-## Precedence
+### Single Endpoint / Top-Level Style
+```toml
+provider = "llama_cpp"
+model = "LiquidAI/LFM2.5-2.6B-GGUF"
+base_url = "http://127.0.0.1:8080"
+max_turns = 20
+stream = true
+```
 
-Configuration settings are resolved in the following order of increasing precedence (highest overrides lowest):
-1. **Defaults**: Hardcoded fallback values within Caravan's core modules.
-2. **Config File**: Settings loaded from your `config.toml` file.
-3. **Environment Variables**: System environment variables (e.g. `OPENAI_API_KEY`, `MAX_TURNS`, `CARAVAN_STRICT_MODE`).
-4. **Command Line Flags**: Arguments passed directly to the `caravan` binary at run time (e.g. `--model`, `--provider`, `--system`).
+### Orchestrator Table Style
+```toml
+stream = true
+max_turns = 100
 
-## Commands & Usage
+[orchestrator]
+provider = "llama_cpp"
+model = "LiquidAI/LFM2.5-2.6B-GGUF"
+base_url = "http://127.0.0.1:8080"
+system = "You are a concise AI assistant."
+```
 
-You can override active configurations on the fly or view current settings during a session:
-- Use `/config` within the REPL to view the current session's settings.
-- Use command-line arguments to launch Caravan with temporary overrides:
-  ```bash
-  dune exec caravan -- --provider openai --model gpt-4o
-  ```
+## Key Lookup & Fallback Hierarchy
+
+When Caravan reads configuration options (`provider`, `model`, `base_url`, `api_key`, `system`, `max_turns`, etc.), it checks sources in the following fallback sequence:
+
+1. **Environment Variables**: `CARAVAN_PROVIDER`, `CARAVAN_MODEL`, `CARAVAN_BASE_URL`, `OPENAI_API_KEY`, etc.
+2. **Root TOML Keys**: Top-level entries in `config.toml` (e.g. `provider = "..."`).
+3. **Orchestrator TOML Section**: Keys nested under `[orchestrator]` (e.g. `[orchestrator] provider = "..."`).
+4. **Hardcoded Module Defaults**: Internal defaults defined in core modules.
+
+## Example Config Reference
+
+For a complete reference with all supported options and subagent configurations, see [example_config.toml](example_config.toml).
+
+## CLI Overrides & Diagnostics
+
+You can inspect active diagnostics and verify your configuration anytime:
+
+```bash
+# Verify system status and network connectivity
+dune exec caravan -- doctor
+
+# Run with temporary model overrides
+dune exec caravan -- --provider openai --model gpt-4o
+```

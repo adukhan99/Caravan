@@ -42,6 +42,8 @@ Edit `config.toml` and change the three core fields:
 
 ## Config Keys Reference
 
+> **Note:** Configuration keys can be placed at the root level of `config.toml` or grouped inside an `[orchestrator]` block (e.g. `[orchestrator] provider = "llama_cpp"`). Caravan resolves root keys first, falling back to `[orchestrator]` keys automatically.
+
 | Key              | Type    | Default  | Description                                      |
 |------------------|---------|----------|--------------------------------------------------|
 | `provider`       | string  | `"ollama"` | Backend to use (`openai`, `ollama`, `llama_cpp`) |
@@ -56,7 +58,7 @@ Edit `config.toml` and change the three core fields:
 ## Using a Custom Endpoint
 
 Any OpenAI-compatible server works. Set `provider = "openai"` and point
-`base_url` at your server:
+`base_url` at your server (or encapsulate inside `[orchestrator]`):
 
 ```toml
 provider = "openai"

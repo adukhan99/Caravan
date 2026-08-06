@@ -88,7 +88,7 @@ Inside the REPL, use these commands to control the session:
 
 ## Configuration
 
-Caravan can be configured via a TOML file at `~/.caravan/config.toml` or via environment variables.
+Caravan can be configured via a TOML file at `~/.caravan/config.toml` (or custom `CARAVAN_CONFIG`), environment variables, or CLI flags. Settings can be placed at the root of the file or scoped within an `[orchestrator]` section.
 
 See the [Configuration Guide](docs/configuration.md) and the annotated [example_config.toml](docs/example_config.toml) for details on all available settings.
 
@@ -102,7 +102,7 @@ cp docs/example_config.toml ~/.caravan/config.toml
 
 ## Architecture
 
-Caravan is built with a modular architecture that separates the core logic from the pluggable backends and tools.
+Caravan is built with a modular architecture that separates core agent logic from pluggable backends, tools, and configuration.
 
 ```mermaid
 flowchart TB
@@ -115,8 +115,8 @@ flowchart TB
 
     subgraph Orchestrator ["The Brain (lib/)"]
         Agent["agent.ml<br/>(Agentic Loop)"]
-        Session["session.ml<br/>(History)"]
-        Memory["memory.ml<br/>(Context)"]
+        Session["session.ml<br/>(History & State)"]
+        Memory["memory.ml<br/>(Context Compaction)"]
         Parser["parser.ml<br/>(Output Logic)"]
     end
 
@@ -128,12 +128,12 @@ flowchart TB
     subgraph Interface ["Pluggable Backends"]
         direction LR
         Providers["<b>Providers</b><br/>(lib/providers/)<br/>OpenAI, Ollama, Llama.cpp"]
-        Tools["<b>Tools</b><br/>(lib/tools/)<br/>FS, Shell, Web, Search"]
+        Tools["<b>Tools</b><br/>(lib/tools/)<br/>FS, Shell, Web, Delegate"]
     end
 
     subgraph Settings ["Configuration"]
-        TOML["~/.caravan/config.toml"]
-        Config["lib/config.ml"]
+        TOML["config.toml<br/>(Root & [orchestrator])"]
+        Config["lib/config.ml<br/>(Fallback Resolver)"]
     end
 
     %% Connections
@@ -157,10 +157,10 @@ flowchart TB
     Config -.-> Agent
 
     %% Styling
-    classDef primary fill:#f9f,stroke:#333,stroke-width:2px;
-    classDef secondary fill:#bbf,stroke:#333,stroke-width:1px;
-    classDef interface fill:#dfd,stroke:#333,stroke-width:1px;
-    classDef dsl fill:#ffd,stroke:#333,stroke-width:1px;
+    classDef primary fill:#e1effe,stroke:#0969da,stroke-width:2px,color:#24292f;
+    classDef secondary fill:#f3e8ff,stroke:#8250df,stroke-width:1px,color:#24292f;
+    classDef interface fill:#daebd1,stroke:#1a7f37,stroke-width:1px,color:#24292f;
+    classDef dsl fill:#fff8c5,stroke:#bf8700,stroke-width:1px,color:#24292f;
     
     class Agent primary;
     class Session,Memory,Parser secondary;

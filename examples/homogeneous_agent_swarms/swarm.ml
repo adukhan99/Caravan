@@ -29,7 +29,9 @@ let pp_result label (result : (Session.t * chat_message result_with_meta, string
       | Some u -> Printf.sprintf "%d prompt + %d completion = %d total tokens"
                     u.prompt_tokens u.completion_tokens u.total_tokens
     in
-    Printf.printf "[%s] ✓ (%s)\n%s\n%!" label tok_info res.value.content
+    Printf.printf "[%s] ✓ (%s)\n%!" label tok_info;
+    if String.trim res.value.content <> "" then
+      Printf.printf "\n  Agent Output:\n%s\n%!" res.value.content
 
 (* ── Provider helpers ─────────────────────────────────────────────────────── *)
 
@@ -202,9 +204,14 @@ let () =
     let net   = env#net in
     let clock = env#clock in
 
-    (* 1. Read orchestrator config *)
-    let (orch_provider_ref, orch_model) =
-      Option.value ~default:("gemini", "gemini-2.5-pro") (Config.get_orchestrator ())
+    (* 1. Read orchestrator config (checks env vars, top-level TOML, or [orchestrator] table) *)
+    let orch_provider_ref =
+      Config.get_string_opt (Some "CARAVAN_PROVIDER") "provider"
+      |> Option.value ~default:"gemini"
+    in
+    let orch_model =
+      Config.get_string_opt (Some "CARAVAN_MODEL") "model"
+      |> Option.value ~default:"gemini-3.6-flash"
     in
     let options = { default_options with temperature = Some 0.2; max_tokens = Some 4096 } in
     let orch_provider = provider_of_ref ~name:orch_provider_ref ~model:orch_model ~options in
@@ -233,7 +240,7 @@ let () =
     let orchestrator_tools = [finish_tool; spawn_agent_tool] in
 
     (* 5. Initialize the orchestrator session *)
-    let orch_system =
+    let default_system =
       "You are a master orchestrator in a homogeneous agent swarm. Your job is to solve complex tasks \
        by decomposing them and dynamically spawning specialized child agents (clones of yourself) \
        using the 'spawn_agent' tool.\n\
@@ -244,6 +251,11 @@ let () =
        - For pure reasoning, planning, or reviewing, spawn an agent with only: [\"finish\"].\n\
        - Child agents start cold with no memory of prior turns. You must provide all necessary context in the task argument.\n\
        - When all sub-tasks are complete, synthesize a concise final summary and call 'finish'."
+    in
+    let orch_system =
+      match Config.get_string "system" with
+      | Some sys when String.trim sys <> "" -> sys
+      | _ -> default_system
     in
 
     let orch_sess =

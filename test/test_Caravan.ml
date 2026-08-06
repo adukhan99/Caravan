@@ -61,6 +61,35 @@ let%test_unit "config_extended" =
   let _ = Config.get_mcp_servers () in
   ()
 
+let%test_unit "config_orchestrator_parsing" =
+  let tmp_config = "test_work_config.toml" in
+  let oc = open_out tmp_config in
+  output_string oc {|
+stream = true
+max_turns = 100
+
+[orchestrator]
+base_url = "http://127.0.0.1:8080"
+provider = "llama_cpp"
+model = "LiquidAI/LFM2.5-2.6B-GGUF"
+system = "Test System Prompt"
+|};
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp_config;
+  (* Force reload of config *)
+  let provider = Config.get_string "provider" in
+  let model = Config.get_string "model" in
+  let base_url = Config.get_string "base_url" in
+  let system = Config.get_string "system" in
+  let max_turns = Config.get_int "max_turns" in
+  Sys.remove tmp_config;
+  Unix.putenv "CARAVAN_CONFIG" "";
+  assert (provider = Some "llama_cpp");
+  assert (model = Some "LiquidAI/LFM2.5-2.6B-GGUF");
+  assert (base_url = Some "http://127.0.0.1:8080");
+  assert (system = Some "Test System Prompt");
+  assert (max_turns = Some 100)
+
 let%test_unit "tool_read_file" =
   let path = "test_dummy_file.txt" in
   let ch = open_out path in

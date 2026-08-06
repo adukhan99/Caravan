@@ -1,6 +1,6 @@
 (** Centralized TOML configuration reader. *)
 
-let config_path =
+let config_path () =
   match Sys.getenv_opt "CARAVAN_CONFIG" with
   | Some p when p <> "" -> p
   | _ ->
@@ -8,43 +8,59 @@ let config_path =
     Filename.concat home ".caravan/config.toml"
 
 let ensure_config_exists () =
-  let dir = Filename.dirname config_path in
+  let path = config_path () in
+  let dir = Filename.dirname path in
   if not (Sys.file_exists dir) then
     (try Unix.mkdir dir 0o755 with _ -> ());
-  if not (Sys.file_exists config_path) then
+  if not (Sys.file_exists path) then
     try
-      let oc = open_out config_path in
+      let oc = open_out path in
       output_string oc "# Caravan Configuration\n\n";
       close_out oc
     with _ -> ()
 
 let is_first_run () =
-  not (Sys.file_exists config_path) ||
+  let path = config_path () in
+  not (Sys.file_exists path) ||
   (try
-     let ic = open_in config_path in
+     let ic = open_in path in
      let len = in_channel_length ic in
      close_in ic;
      len < 50
    with _ -> true)
 
 let load_toml () =
+  let path = config_path () in
   ensure_config_exists ();
-  if Sys.file_exists config_path then
-    try Some (Otoml.Parser.from_file config_path)
+  if Sys.file_exists path then
+    try Some (Otoml.Parser.from_file path)
     with exn ->
       Printf.eprintf "[Caravan] Warning: Failed to parse %s: %s\n%!"
-        config_path (Printexc.to_string exn);
+        path (Printexc.to_string exn);
       None
   else None
 
-let toml_ast = lazy (load_toml ())
+let current_loaded_path = ref None
+let cached_ast = ref None
+
+let get_ast () =
+  let path = config_path () in
+  match !cached_ast, !current_loaded_path with
+  | Some ast, Some p when p = path -> ast
+  | _ ->
+    let ast = load_toml () in
+    current_loaded_path := Some path;
+    cached_ast := Some ast;
+    ast
 
 let get_int key =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> None
   | Some ast ->
     try Some (Otoml.find ast Otoml.get_integer [key])
-    with _ -> None
+    with _ ->
+      try Some (Otoml.find ast Otoml.get_integer ["orchestrator"; key])
+      with _ -> None
 
 let get_int_opt env_var toml_key =
   match env_var with
@@ -54,11 +70,21 @@ let get_int_opt env_var toml_key =
   | None -> get_int toml_key
 
 let get_string key =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> None
   | Some ast ->
-    try Some (Otoml.find ast Otoml.get_string [key])
-    with _ -> None
+    let find_str k =
+      try Some (Otoml.find ast Otoml.get_string [k])
+      with _ ->
+        try Some (Otoml.find ast Otoml.get_string ["orchestrator"; k])
+        with _ -> None
+    in
+    match find_str key with
+    | Some _ as r -> r
+    | None ->
+      if key = "openai_api_key" then find_str "api_key"
+      else if key = "api_key" then find_str "openai_api_key"
+      else None
 
 let get_string_opt env_var toml_key =
   match env_var with
@@ -68,11 +94,15 @@ let get_string_opt env_var toml_key =
   | None -> get_string toml_key
 
 let get_bool ?(path=[]) key =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> None
   | Some ast ->
     try Some (Otoml.find ast Otoml.get_boolean (path @ [key]))
-    with _ -> None
+    with _ ->
+      if path = [] then
+        try Some (Otoml.find ast Otoml.get_boolean ["orchestrator"; key])
+        with _ -> None
+      else None
 
 let get_bool_opt ?path env_var toml_key =
   let of_env_str = function
@@ -138,7 +168,7 @@ type provider_config = {
 }
 
 let get_mcp_servers () =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> []
   | Some ast ->
     try
@@ -218,7 +248,7 @@ let parse_gres fields =
 
 (** Read all [[subagents]] entries from the config file. *)
 let get_subagents () =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> []
   | Some ast ->
     try
@@ -257,7 +287,7 @@ let get_subagents () =
 
 (** Read a single [providers.<name>] table. *)
 let get_provider_config name =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> None
   | Some ast ->
     try
@@ -277,7 +307,7 @@ let get_provider_config name =
 
 (** Read the [orchestrator] table. Returns (provider_ref, model). *)
 let get_orchestrator () =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> None
   | Some ast ->
     try
@@ -302,7 +332,7 @@ let get_spinner_verbose () =
 
 (** Read the TOML [spinner.<tool>] key as a string or array of strings. *)
 let get_spinner_verbs tool_name =
-  match Lazy.force toml_ast with
+  match get_ast () with
   | None -> None
   | Some ast ->
     (* Try array first, then fall back to plain string. *)

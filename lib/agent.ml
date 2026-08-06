@@ -14,11 +14,21 @@ let default_config = {
 
 let is_finished sess =
   let history = Session.history sess in
-  List.exists (fun (msg : chat_message) ->
-    match msg.tool_calls with
-    | Some tcs -> List.exists (fun tc -> tc.name = "finish") tcs
-    | None -> false
-  ) history
+  let has_finish_tool =
+    List.exists (fun (msg : chat_message) ->
+      match msg.tool_calls with
+      | Some tcs -> List.exists (fun tc -> tc.name = "finish") tcs
+      | None -> false
+    ) history
+  in
+  if has_finish_tool then true
+  else
+    match List.rev history with
+    | msg :: _ when msg.role = Assistant && String.trim msg.content <> "" ->
+      (match msg.tool_calls with
+       | None | Some [] -> true
+       | _ -> false)
+    | _ -> false
 
 let run_generic ?(config = default_config) ?on_turn run_fn sess task =
   let rec loop sess =

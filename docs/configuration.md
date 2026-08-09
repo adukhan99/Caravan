@@ -1,53 +1,82 @@
 # Configuration Guide
 
-Caravan can be configured via a TOML file located at `~/.caravan/config.toml` (or custom path via `CARAVAN_CONFIG`), environment variables, or command-line flags.
+Caravan reads one TOML file — `~/.caravan/config.toml` by default, or the
+path in `CARAVAN_CONFIG`. `caravan init` writes it for you (mode 0600);
+`caravan config set KEY VALUE` edits it from the CLI.
 
-## TOML Config Structure
+## Resolution order
 
-Configuration settings can be defined either at the top-level or scoped within an `[orchestrator]` section block for clean organization.
+For every setting, the first source that provides a value wins:
 
-### Single Endpoint / Top-Level Style
+1. **CLI flags** — `-p/--provider`, `-m/--model`, `--base-url`, `-s/--system`;
+2. **Environment** — `CARAVAN_PROVIDER`, `CARAVAN_MODEL`, `CARAVAN_BASE_URL`,
+   `CARAVAN_STREAM`, `CARAVAN_MAX_TURNS`, `CARAVAN_PERMISSIONS`,
+   `CARAVAN_TRANSCRIPT`, `CARAVAN_NUDGE`, `CARAVAN_STRICT_MODE`,
+   `CARAVAN_SPINNER`, `CARAVAN_TLS_INSECURE`, provider key vars;
+3. **TOML root keys**, then the same keys inside `[orchestrator]`;
+4. **Registry / module defaults**.
+
+## Core keys
+
 ```toml
-provider = "llama_cpp"
-model = "LiquidAI/LFM2.5-2.6B-GGUF"
-base_url = "http://127.0.0.1:8080"
-max_turns = 20
-stream = true
+provider    = "anthropic"          # see `caravan providers`
+model       = "claude-sonnet-4-5"  # omit to use the provider default
+# base_url  = "http://my-gateway:8000/v1"   # custom endpoints
+system      = "You are a concise research assistant."
+
+stream      = true       # stream tokens as they arrive
+max_turns   = 15         # agent turn budget
+nudge       = true       # budget-awareness nudges in agent loops
+permissions = "auto"     # auto | ask | readonly (mutating-tool policy)
+transcript  = true       # JSONL session logs in ~/.caravan/logs/
+strict_mode = 1          # bash tool: 0 permissive, 1 single-command, 2 hidden
 ```
 
-### Orchestrator Table Style
-```toml
-stream = true
-max_turns = 100
+## API keys
 
-[orchestrator]
-provider = "llama_cpp"
-model = "LiquidAI/LFM2.5-2.6B-GGUF"
-base_url = "http://127.0.0.1:8080"
-system = "You are a concise AI assistant."
+```toml
+[api_keys]
+anthropic = "sk-ant-..."
+groq      = "gsk_..."
 ```
 
-## Key Lookup & Fallback Hierarchy
+Environment variables (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, …) take
+precedence and are the recommended place for secrets; the `[api_keys]`
+table exists for machines where a private 0600 file beats env plumbing
+(e.g. cron, HPC batch scripts).
 
-When Caravan reads configuration options (`provider`, `model`, `base_url`, `api_key`, `system`, `max_turns`, etc.), it checks sources in the following fallback sequence:
+## Spinner
 
-1. **Environment Variables**: `CARAVAN_PROVIDER`, `CARAVAN_MODEL`, `CARAVAN_BASE_URL`, `OPENAI_API_KEY`, etc.
-2. **Root TOML Keys**: Top-level entries in `config.toml` (e.g. `provider = "..."`).
-3. **Orchestrator TOML Section**: Keys nested under `[orchestrator]` (e.g. `[orchestrator] provider = "..."`).
-4. **Hardcoded Module Defaults**: Internal defaults defined in core modules.
+```toml
+[spinner]
+enabled = true    # auto-disabled whenever stderr is not a TTY
+verbose = false
+# Per-tool verbs; arrays pick one at random for personality:
+thinking = ["Thinking", "Pondering", "Mulling"]
+bash     = ["Running", "Executing"]
+```
 
-## Example Config Reference
+## Subagents and multi-provider setups
 
-For a complete reference with all supported options and subagent configurations, see [example_config.toml](example_config.toml).
+`[[subagents]]` tables define delegate-able workers, and `[providers.<name>]`
+tables define extra endpoints for them. See
+[example_config.toml](example_config.toml) and the two swarm examples in
+`examples/`.
 
-## CLI Overrides & Diagnostics
+## MCP servers
 
-You can inspect active diagnostics and verify your configuration anytime:
+```toml
+[[mcp.servers]]
+name      = "filesystem"
+transport = "stdio"
+command   = "npx"
+args      = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/ws"]
+```
+
+## Diagnostics
 
 ```bash
-# Verify system status and network connectivity
-dune exec caravan -- doctor
-
-# Run with temporary model overrides
-dune exec caravan -- --provider openai --model gpt-4o
+caravan doctor          # config validity, key presence, endpoint reachability
+caravan config show     # print the active config file
+caravan config path     # where it lives
 ```

@@ -39,11 +39,16 @@ let spawn_subagent role task =
 let parse_warning field message =
   Effect.perform (Parse_warning { field; message })
 
+(** Handle the effects for which a handler was actually supplied; the rest
+    are forwarded (and, if nothing outer handles them, the perform site's
+    own [Effect.Unhandled] fallback applies). In particular, wrapping a
+    session in [run_with_effects ~permission_policy] must NOT swallow
+    [Exec_tool] — tools execute directly when no [on_exec] is given. *)
 let run_with_effects
     ?(permission_policy = fun _ _ -> true)
     ?(on_log = fun _ _ -> ())
-    ?(on_exec = fun _ _ -> "No exec handler registered.")
-    ?(on_spawn = fun _ _ -> Error "No spawn handler registered.")
+    ?(on_exec : (string -> string -> string) option)
+    ?(on_spawn : (string -> string -> (string, string) result) option)
     ?(on_parse_warning = fun _ _ -> ())
     f =
   Effect.Deep.try_with f () {
@@ -58,13 +63,19 @@ let run_with_effects
           on_log level message;
           Effect.Deep.continue k ())
       | Exec_tool { tool_name; args } ->
-        Some (fun k ->
-          let res = on_exec tool_name args in
-          Effect.Deep.continue k res)
+        (match on_exec with
+         | None -> None
+         | Some handler ->
+           Some (fun k ->
+             let res = handler tool_name args in
+             Effect.Deep.continue k res))
       | Spawn_subagent { role; task } ->
-        Some (fun k ->
-          let res = on_spawn role task in
-          Effect.Deep.continue k res)
+        (match on_spawn with
+         | None -> None
+         | Some handler ->
+           Some (fun k ->
+             let res = handler role task in
+             Effect.Deep.continue k res))
       | Parse_warning { field; message } ->
         Some (fun k ->
           on_parse_warning field message;

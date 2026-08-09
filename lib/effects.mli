@@ -19,6 +19,9 @@ val log_event : string -> string -> unit
 val spawn_subagent : string -> string -> (string, string) result
 val parse_warning : string -> string -> unit
 
+(** Install handlers for the effects that were actually supplied; all
+    other effects are forwarded. Notably, omitting [on_exec] leaves
+    [Exec_tool] unhandled so tools fall back to direct execution. *)
 val run_with_effects :
   ?permission_policy:(string -> string -> bool) ->
   ?on_log:(string -> string -> unit) ->

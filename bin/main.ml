@@ -596,6 +596,7 @@ let repl_cmd =
 
 let run_agent model provider_name base_url system max_turns quiet json_out task =
   init_mcp ();
+  let quiet = quiet || json_out in
   let transcript = setup_frontend ~quiet () in
   let model = effective_model ~provider_name model in
   let exit_code = ref 0 in

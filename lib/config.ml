@@ -1,4 +1,4 @@
-(** Centralized TOML configuration reader. *)
+(** Centralized TOML configuration reader and writer. *)
 
 let config_path () =
   match Sys.getenv_opt "CARAVAN_CONFIG" with
@@ -7,17 +7,94 @@ let config_path () =
     let home = match Sys.getenv_opt "HOME" with Some h -> h | None -> "." in
     Filename.concat home ".caravan/config.toml"
 
+let current_loaded_path = ref None
+let cached_ast = ref None
+
+(** Invalidate cached AST in memory. *)
+let reload () =
+  cached_ast := None;
+  current_loaded_path := None
+
+(** Rewrite the config TOML file from an updated AST with strict 0600 permissions. *)
+let write_ast ast =
+  let path = config_path () in
+  let dir = Filename.dirname path in
+  if not (Sys.file_exists dir) then (try Unix.mkdir dir 0o700 with _ -> ());
+  let oc = open_out_gen [Open_creat; Open_trunc; Open_wronly] 0o600 path in
+  output_string oc (Otoml.Printer.to_string ast);
+  close_out oc;
+  (try Unix.chmod path 0o600 with _ -> ());
+  reload ();
+  Ok path
+
+(* Helper: find a string value in AST at [keys]. *)
+let find_string_in_ast ast keys =
+  try Some (Otoml.find ast Otoml.get_string keys)
+  with _ -> None
+
+(** Ensure an [orchestrator] section exists in [ast].
+    If [orchestrator] lacks provider or model:
+    1. Try top-level provider/model from [ast].
+    2. Fall back to [fallback_provider] and [fallback_model] (e.g. from the first subagent input). *)
+let ensure_orchestrator_in_ast ?fallback_provider ?fallback_model ast =
+  let has_orch_p =
+    match find_string_in_ast ast ["orchestrator"; "provider"] with
+    | Some s -> String.trim s <> ""
+    | None -> false
+  in
+  let has_orch_m =
+    match find_string_in_ast ast ["orchestrator"; "model"] with
+    | Some s -> String.trim s <> ""
+    | None -> false
+  in
+  if has_orch_p && has_orch_m then ast
+  else
+    let prov =
+      if has_orch_p then find_string_in_ast ast ["orchestrator"; "provider"]
+      else match find_string_in_ast ast ["provider"] with
+        | Some p when String.trim p <> "" -> Some p
+        | _ -> fallback_provider
+    in
+    let md =
+      if has_orch_m then find_string_in_ast ast ["orchestrator"; "model"]
+      else match find_string_in_ast ast ["model"] with
+        | Some m when String.trim m <> "" -> Some m
+        | _ -> fallback_model
+    in
+    match prov, md with
+    | Some p, Some m ->
+      let ast' = Otoml.update ast ["orchestrator"; "provider"] (Some (Otoml.string p)) in
+      Otoml.update ast' ["orchestrator"; "model"] (Some (Otoml.string m))
+    | _ -> ast
+
+(** Automatically assign/ensure the [orchestrator] table in config.toml
+    from main fields or fallback inputs. *)
+let ensure_orchestrator ?fallback_provider ?fallback_model () =
+  let path = config_path () in
+  try
+    let ast =
+      if Sys.file_exists path then
+        (try Otoml.Parser.from_file path with _ -> Otoml.TomlTable [])
+      else Otoml.TomlTable []
+    in
+    let ast' = ensure_orchestrator_in_ast ?fallback_provider ?fallback_model ast in
+    if ast' <> ast then
+      ignore (write_ast ast')
+  with _ -> ()
+
+(** Create default config directory and file if missing, auto-populating [orchestrator]. *)
 let ensure_config_exists () =
   let path = config_path () in
   let dir = Filename.dirname path in
   if not (Sys.file_exists dir) then
     (try Unix.mkdir dir 0o755 with _ -> ());
   if not (Sys.file_exists path) then
-    try
-      let oc = open_out path in
-      output_string oc "# Caravan Configuration\n\n";
-      close_out oc
-    with _ -> ()
+    (try
+       let oc = open_out path in
+       output_string oc "# Caravan Configuration\n\n";
+       close_out oc
+     with _ -> ());
+  ensure_orchestrator ()
 
 let is_first_run () =
   let path = config_path () in
@@ -39,9 +116,6 @@ let load_toml () =
         path (Printexc.to_string exn);
       None
   else None
-
-let current_loaded_path = ref None
-let cached_ast = ref None
 
 let get_ast () =
   let path = config_path () in
@@ -452,14 +526,8 @@ let set_toml_value dotted_key (value : Otoml.t) : (string, string) result =
     if keys = [] then Error "empty key"
     else begin
       let ast' = Otoml.update ast keys (Some value) in
-      let dir = Filename.dirname path in
-      if not (Sys.file_exists dir) then (try Unix.mkdir dir 0o700 with _ -> ());
-      let oc = open_out_gen [Open_creat; Open_trunc; Open_wronly] 0o600 path in
-      output_string oc (Otoml.Printer.to_string ast');
-      close_out oc;
-      (try Unix.chmod path 0o600 with _ -> ());
-      reload ();
-      Ok path
+      let ast'' = ensure_orchestrator_in_ast ast' in
+      write_ast ast''
     end
   with exn -> Error (Printexc.to_string exn)
 
@@ -490,4 +558,149 @@ let editable_keys : (string * string * string) list = [
   ("strict_mode", "bash tool discipline",               "0 | 1 | 2");
   ("enable_subagents", "Offer the delegate tool when [[subagents]] exist", "true | false");
 ]
+
+(** Field descriptors for the subagent creation UI — single source of truth
+    shared by the REPL and web cockpit.
+    [(toml_key, label, placeholder, required)]. *)
+let editable_subagent_fields : (string * string * string * bool) list = [
+  ("name",          "Name",           "e.g. coder",          true);
+  ("provider",      "Provider",       "registry or [providers.*]", true);
+  ("model",         "Model",          "e.g. qwen3:8b",       true);
+  ("system_prompt", "System prompt",  "persona / instructions", false);
+  ("tools",         "Tools",          "comma-separated names", false);
+  ("role",          "Worker role",    "atomic | parallel",   false);
+  ("max_tokens",    "Max tokens",     "integer",             false);
+  ("temperature",   "Temperature",    "0.0 – 2.0",          false);
+]
+
+(** Append a new [[subagents]] entry to the config file.
+    [fields] is an assoc list of string key/value pairs coming from the
+    web or REPL UI. Required keys: name, provider, model. *)
+let add_subagent (fields : (string * string) list) : (string, string) result =
+  let lookup k = List.assoc_opt k fields in
+  match lookup "name", lookup "provider", lookup "model" with
+  | None, _, _ -> Error "name is required"
+  | _, None, _ -> Error "provider is required"
+  | _, _, None -> Error "model is required"
+  | Some name, Some provider, Some model ->
+    if String.trim name = "" then Error "name must not be empty"
+    else if String.trim provider = "" then Error "provider must not be empty"
+    else if String.trim model = "" then Error "model must not be empty"
+    else begin
+      let path = config_path () in
+      try
+        let ast =
+          if Sys.file_exists path then
+            (try Otoml.Parser.from_file path with _ -> Otoml.TomlTable [])
+          else Otoml.TomlTable []
+        in
+        (* Build the TOML inline-table for this subagent *)
+        let pairs = ref [
+          ("name",     Otoml.string name);
+          ("provider", Otoml.string provider);
+          ("model",    Otoml.string model);
+        ] in
+        (match lookup "system_prompt" with
+         | Some sp when sp <> "" -> pairs := !pairs @ [("system_prompt", Otoml.string sp)]
+         | _ -> ());
+        (match lookup "tools" with
+         | Some ts when ts <> "" ->
+           let tool_list =
+             String.split_on_char ',' ts
+             |> List.map String.trim
+             |> List.filter (fun s -> s <> "")
+             |> List.map Otoml.string
+           in
+           if tool_list <> [] then
+             pairs := !pairs @ [("tools", Otoml.TomlArray tool_list)]
+         | _ -> ());
+        (match lookup "role" with
+         | Some r when r <> "" -> pairs := !pairs @ [("role", Otoml.string r)]
+         | _ -> ());
+        (match lookup "max_tokens" with
+         | Some mt when mt <> "" ->
+           (match int_of_string_opt mt with
+            | Some n -> pairs := !pairs @ [("max_tokens", Otoml.integer n)]
+            | None -> ())
+         | _ -> ());
+        (match lookup "temperature" with
+         | Some t when t <> "" ->
+           (match float_of_string_opt t with
+            | Some f -> pairs := !pairs @ [("temperature", Otoml.float f)]
+            | None -> ())
+         | _ -> ());
+        let entry = Otoml.TomlTable !pairs in
+        (* Append to the existing [[subagents]] array or create one *)
+        let existing =
+          try match Otoml.find ast (fun x -> x) ["subagents"] with
+            | Otoml.TomlArray l | Otoml.TomlTableArray l -> l
+            | _ -> []
+          with _ -> []
+        in
+        (* Check for duplicate name *)
+        let dupe =
+          List.exists (fun item ->
+            match item with
+            | Otoml.TomlTable fs | Otoml.TomlInlineTable fs ->
+              assoc_string_opt fs "name" = Some name
+            | _ -> false
+          ) existing
+        in
+        if dupe then Error (Printf.sprintf "subagent '%s' already exists" name)
+        else begin
+          let new_arr = Otoml.TomlTableArray (existing @ [entry]) in
+          let ast' = Otoml.update ast ["subagents"] (Some new_arr) in
+          let ast'' = ensure_orchestrator_in_ast ~fallback_provider:provider ~fallback_model:model ast' in
+          write_ast ast''
+        end
+      with exn -> Error (Printexc.to_string exn)
+    end
+
+(** Remove a [[subagents]] entry by name. *)
+let delete_subagent name : (string, string) result =
+  let path = config_path () in
+  try
+    let ast =
+      if Sys.file_exists path then
+        (try Otoml.Parser.from_file path with _ -> Otoml.TomlTable [])
+      else Otoml.TomlTable []
+    in
+    let existing =
+      try match Otoml.find ast (fun x -> x) ["subagents"] with
+        | Otoml.TomlArray l | Otoml.TomlTableArray l -> l
+        | _ -> []
+      with _ -> []
+    in
+    let filtered =
+      List.filter (fun item ->
+        match item with
+        | Otoml.TomlTable fs | Otoml.TomlInlineTable fs ->
+          assoc_string_opt fs "name" <> Some name
+        | _ -> true
+      ) existing
+    in
+    if List.length filtered = List.length existing then
+      Error (Printf.sprintf "subagent '%s' not found" name)
+    else begin
+      let value =
+        if filtered = [] then None
+        else Some (Otoml.TomlTableArray filtered)
+      in
+      let ast' = Otoml.update ast ["subagents"] value in
+      write_ast ast'
+    end
+  with exn -> Error (Printexc.to_string exn)
+
+(** Serialize a [subagent_config] to a JSON object for the web API. *)
+let subagent_to_json (cfg : subagent_config) : Yojson.Safe.t =
+  `Assoc [
+    ("name",          `String cfg.name);
+    ("provider",      `String cfg.provider_ref);
+    ("model",         `String cfg.model);
+    ("role",          `String cfg.worker_role);
+    ("system_prompt", `String cfg.system_prompt);
+    ("tools",         `List (List.map (fun t -> `String t) cfg.tool_names));
+    ("max_tokens",    (match cfg.max_tokens with Some n -> `Int n | None -> `Null));
+    ("temperature",   (match cfg.temperature with Some f -> `Float f | None -> `Null));
+  ]
 

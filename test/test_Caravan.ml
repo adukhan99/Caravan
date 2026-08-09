@@ -1068,3 +1068,30 @@ let%test_unit "config_set_value_roundtrip" =
   (* editable_keys stay well-formed (UI single source of truth) *)
   List.iter (fun (k, d, a) ->
     assert (k <> "" && d <> "" && a <> "")) Config.editable_keys
+
+let%test_unit "config_orchestrator_auto_population" =
+  let tmp = "test_config_orchestrator_auto.toml" in
+  if Sys.file_exists tmp then Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  (* Case 1: Add subagent when config is blank. Orchestrator auto-populated from first agent input. *)
+  (match Config.add_subagent [("name", "worker_a"); ("provider", "ollama"); ("model", "qwen2.5:7b")] with
+   | Ok _ -> ()
+   | Error e -> failwith ("add_subagent failed: " ^ e));
+  assert (Config.get_orchestrator () = Some ("ollama", "qwen2.5:7b"));
+
+  (* Clean up for Case 2 *)
+  Sys.remove tmp;
+  Config.reload ();
+  (* Case 2: Set top-level main fields first, then add a subagent. Orchestrator auto-populated from main fields. *)
+  (match Config.set_value "provider" "anthropic" with Ok _ -> () | Error e -> failwith e);
+  (match Config.set_value "model" "claude-haiku-4-5" with Ok _ -> () | Error e -> failwith e);
+  (match Config.add_subagent [("name", "worker_b"); ("provider", "ollama"); ("model", "llama3")] with
+   | Ok _ -> ()
+   | Error e -> failwith ("add_subagent failed: " ^ e));
+  assert (Config.get_orchestrator () = Some ("anthropic", "claude-haiku-4-5"));
+
+  Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" "";
+  Config.reload ()
+

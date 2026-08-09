@@ -83,6 +83,19 @@ let html_page = {html|<!doctype html>
           font-size: 12.5px; cursor: pointer; }
   .sect { border-top: 1px solid var(--line); margin-top: 14px;
           padding-top: 12px; }
+  .sect h3 { margin: 0 0 8px; font-size: 13px; color: var(--teal);
+             letter-spacing: 1px; text-transform: uppercase; }
+  .sa-entry { background: var(--bg); border: 1px solid var(--line);
+              border-radius: 8px; padding: 8px 12px; margin: 6px 0;
+              display: flex; justify-content: space-between; align-items: center;
+              font-size: 12.5px; }
+  .sa-entry .sa-info { color: var(--ink); }
+  .sa-entry .sa-meta { color: var(--dim); font-size: 11px; }
+  .sa-del { background: var(--rose); color: #14100c; border: none;
+            border-radius: 5px; padding: 3px 8px; font: inherit;
+            font-size: 11px; cursor: pointer; }
+  .sa-del:hover { opacity: .85; }
+  .sa-none { color: var(--dim); font-size: 12px; font-style: italic; }
   #smsg { font-size: 12px; min-height: 16px; margin-top: 8px; }
   #smsg.ok { color: var(--teal); } #smsg.err { color: var(--rose); }
 </style>
@@ -103,6 +116,11 @@ let html_page = {html|<!doctype html>
         <input type="password" id="kval" placeholder="paste key — stored 0600, never displayed">
         <button id="ksave">save</button>
       </div>
+    </div>
+    <div class="sect">
+      <h3>☷ Subagents</h3>
+      <div id="saroster"></div>
+      <div id="sanew"></div>
     </div>
     <div id="smsg"></div>
     <div class="sect" style="text-align:right">
@@ -236,6 +254,69 @@ async function openSettings() {
     o.textContent = p.name + (p.key_set ? ' ✓' : ' — no key');
     sel.appendChild(o);
   });
+  // ── Subagent roster ──
+  const roster = document.getElementById('saroster');
+  roster.innerHTML = '';
+  if (cfg.subagents && cfg.subagents.length) {
+    cfg.subagents.forEach(sa => {
+      const e = document.createElement('div'); e.className = 'sa-entry';
+      const info = document.createElement('div');
+      info.innerHTML = '<span class="sa-info">' + sa.name + '</span> '
+        + '<span class="sa-meta">' + sa.provider + '/' + sa.model
+        + (sa.tools.length ? ' · ' + sa.tools.join(', ') : '') + '</span>';
+      const del = document.createElement('button'); del.className = 'sa-del';
+      del.textContent = '✕'; del.title = 'delete ' + sa.name;
+      del.onclick = async () => {
+        const rr = await fetch('/api/subagents', {
+          method: 'DELETE',
+          headers: {'content-type': 'application/json'},
+          body: JSON.stringify({name: sa.name})
+        });
+        const j = await rr.json();
+        note(!j.error, j.error || 'deleted ' + sa.name);
+        if (!j.error) openSettings();
+      };
+      e.append(info, del); roster.appendChild(e);
+    });
+  } else {
+    const none = document.createElement('div'); none.className = 'sa-none';
+    none.textContent = 'No subagents configured.';
+    roster.appendChild(none);
+  }
+  // ── Add subagent form ──
+  const sanew = document.getElementById('sanew');
+  sanew.innerHTML = '';
+  if (cfg.subagent_fields) {
+    const inputs = {};
+    cfg.subagent_fields.forEach(f => {
+      const row = document.createElement('div'); row.className = 'srow';
+      const lbl = document.createElement('label');
+      lbl.textContent = f.label + (f.required ? ' *' : '');
+      const inp = document.createElement('input');
+      inp.placeholder = f.placeholder; inp.dataset.key = f.key;
+      inputs[f.key] = inp;
+      row.append(lbl, inp); sanew.appendChild(row);
+    });
+    const brow = document.createElement('div'); brow.className = 'srow';
+    brow.style.justifyContent = 'flex-end';
+    const abtn = document.createElement('button');
+    abtn.textContent = '+ add subagent'; abtn.style.background = 'var(--amber)';
+    abtn.onclick = async () => {
+      const payload = {};
+      for (const [k, inp] of Object.entries(inputs)) {
+        if (inp.value.trim()) payload[k] = inp.value.trim();
+      }
+      const rr = await fetch('/api/subagents', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const j = await rr.json();
+      note(!j.error, j.error || ('added' + (j.note ? ' — ' + j.note : '')));
+      if (!j.error) openSettings();
+    };
+    brow.appendChild(abtn); sanew.appendChild(brow);
+  }
   smsg.textContent = '';
   modal.classList.add('open');
 }
@@ -374,10 +455,24 @@ let config_snapshot () =
         ("key_set", `Bool (CaravanProviders.Registry.api_key_for e <> None));
       ])) CaravanProviders.Registry.entries
   in
+  let subagent_fields =
+    List.map (fun (key, label, placeholder, required) ->
+      `Assoc [
+        ("key", `String key);
+        ("label", `String label);
+        ("placeholder", `String placeholder);
+        ("required", `Bool required);
+      ]) Config.editable_subagent_fields
+  in
+  let subagents =
+    List.map Config.subagent_to_json (Config.get_subagents ())
+  in
   `Assoc [
     ("path", `String (Config.config_path ()));
     ("settings", `List settings);
     ("providers", `List providers);
+    ("subagent_fields", `List subagent_fields);
+    ("subagents", `List subagents);
   ]
 
 let callback st net clock _conn request body =
@@ -446,6 +541,48 @@ let callback st net clock _conn request body =
      with _ ->
        json_response ~status:`Bad_request
          (`Assoc [("error", `String "expected {\"provider\":…, \"key\":…}")]))
+  | `GET, "/api/subagents" ->
+    let entries = List.map Config.subagent_to_json (Config.get_subagents ()) in
+    json_response (`Assoc [("subagents", `List entries)])
+  | `POST, "/api/subagents" ->
+    let raw = read_body body in
+    (try
+       let json = Yojson.Safe.from_string raw in
+       let open Yojson.Safe.Util in
+       let fields =
+         List.filter_map (fun (key, _, _, _) ->
+           match json |> member key with
+           | `String v -> Some (key, v)
+           | `Null -> None
+           | _ -> None
+         ) Config.editable_subagent_fields
+       in
+       (match Config.add_subagent fields with
+        | Ok _ ->
+          Trace.log "info" "web: subagent added";
+          json_response (`Assoc [("ok", `Bool true); ("note", `String
+            "Saved. Restart the server for the delegate tool to pick up new workers.")])
+        | Error e ->
+          json_response ~status:`Bad_request
+            (`Assoc [("error", `String e)]))
+     with _ ->
+       json_response ~status:`Bad_request
+         (`Assoc [("error", `String "expected JSON with subagent fields")]))
+  | `DELETE, "/api/subagents" ->
+    let raw = read_body body in
+    (try
+       let json = Yojson.Safe.from_string raw in
+       let name = Yojson.Safe.Util.(json |> member "name" |> to_string) in
+       (match Config.delete_subagent name with
+        | Ok _ ->
+          Trace.log "info" "web: subagent '%s' deleted" name;
+          json_response (`Assoc [("ok", `Bool true)])
+        | Error e ->
+          json_response ~status:`Bad_request
+            (`Assoc [("error", `String e)]))
+     with _ ->
+       json_response ~status:`Bad_request
+         (`Assoc [("error", `String "expected {\"name\":\"…\"}")]))
   | `POST, ("/api/chat" | "/api/agent") ->
     let agent_mode = path = "/api/agent" in
     let raw = read_body body in

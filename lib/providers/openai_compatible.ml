@@ -285,33 +285,39 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
     wrap_result ~raw_response:full ~model:effective_model ~provider:cfg.provider_name
       ?usage:(!usage_ref) reply
 
+(** List models. Transport failures (connection refused, TLS, DNS)
+    PROPAGATE so callers like [doctor] and the init wizard can report an
+    unreachable endpoint honestly. The [cfg.model] fallback applies only
+    when the server responds but has no parseable /models listing. *)
 let list_models net cfg =
   let uri    = Uri.of_string (cfg.base_url ^ cfg.models_path) in
   let client = make_client net uri in
-  (try
-    Eio.Switch.run @@ fun sw ->
-    let headers = Http.Header.of_list (auth_headers cfg) in
-    let (resp, body) = Cohttp_eio.Client.get client ~sw ~headers uri in
-    let status = Http.Response.status resp |> Http.Status.to_int in
-    let body_str = read_body body in
-    if status >= 200 && status < 300 then
-      try
-        let json = Yojson.Safe.from_string body_str in
-        let open Yojson.Safe.Util in
-        let items =
-          match json |> member "data" with
-          | `List l -> l
-          | _ -> (match json |> member "models" with `List l -> l | _ -> [])
-        in
-        List.map (fun m ->
-          match m |> member "id" with
-          | `String id -> id
-          | _ -> (match m |> member "name" with `String name -> name | _ -> "")
-        ) items |> List.filter (fun s -> s <> "")
-      with _ -> [cfg.model]
-    else
-      [cfg.model]
-  with _ -> [cfg.model])
+  Eio.Switch.run @@ fun sw ->
+  let headers = Http.Header.of_list (auth_headers cfg) in
+  let (resp, body) = Cohttp_eio.Client.get client ~sw ~headers uri in
+  let status = Http.Response.status resp |> Http.Status.to_int in
+  let body_str = read_body body in
+  if status >= 200 && status < 300 then
+    try
+      let json = Yojson.Safe.from_string body_str in
+      let open Yojson.Safe.Util in
+      let items =
+        match json |> member "data" with
+        | `List l -> l
+        | _ -> (match json |> member "models" with `List l -> l | _ -> [])
+      in
+      List.map (fun m ->
+        match m |> member "id" with
+        | `String id -> id
+        | _ -> (match m |> member "name" with `String name -> name | _ -> "")
+      ) items |> List.filter (fun s -> s <> "")
+    with _ -> [cfg.model]
+  else if status = 404 || status = 405 then
+    (* Server up, no /models endpoint (some llama.cpp builds, gateways). *)
+    [cfg.model]
+  else
+    failwith (Printf.sprintf "%s models error %d: %s"
+                cfg.provider_name status body_str)
 
 let make_provider
     ?(provider_name = "openai_compatible")

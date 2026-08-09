@@ -84,9 +84,12 @@ let effective_model ~provider_name = function
      | Some m -> m
      | None -> Registry.default_model provider_name)
 
-let make_session ~provider_name ~model ~base_url ~system =
+(** Build a session inside [Eio_main.run]: static + MCP tools, plus the
+    config-declared delegate tool when subagents are enabled. *)
+let make_session ~net ~clock ~provider_name ~model ~base_url ~system =
   let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-  let sess = Session.create ~tools:(all_tools ()) model provider in
+  let tools = Subagents.session_tools ~net ~clock (all_tools ()) in
+  let sess = Session.create ~tools model provider in
   match system with Some s -> Session.set_system sess s | None -> sess
 
 (* ── REPL state ───────────────────────────────────────────────────────── *)
@@ -113,6 +116,8 @@ let help_groups = [
       ("/agent <task>", "Let the AI work autonomously on a task",
        Some "Example: /agent summarize the files in this directory");
       ("/nudge <text>", "Queue a steering note for the next model call", None);
+      ("/lisp <program>", "Evaluate a Slip expression (the model's calculator)",
+       Some "Example: /lisp (mean (list 4 8 15 16 23 42))");
       ("/system [text]", "Set instructions for the AI's personality", None);
       ("/clear", "Start a fresh conversation", None);
     ] };
@@ -124,6 +129,7 @@ let help_groups = [
        Some "Example: /provider anthropic");
       ("/models", "Browse available models", None);
       ("/providers", "List supported providers and key status", None);
+      ("/subagents", "Show configured subagent workers", None);
     ] };
   { title = "Safety and Tuning";
     commands = [
@@ -138,6 +144,9 @@ let help_groups = [
       ("/export [file]", "Save conversation to a file", None);
       ("/tools", "List available tools for the agent", None);
       ("/config", "Show current settings", None);
+      ("/config set <k> <v>", "Change a setting, saved to the config file",
+       Some "Example: /config set permissions ask   (/config keys lists them)");
+      ("/key <provider>", "Store an API key (input hidden, file 0600)", None);
     ] };
   { title = "Exit";
     commands = [
@@ -157,6 +166,31 @@ let print_help_grouped groups =
     ) g.commands
   ) groups;
   print_newline ()
+
+(* ── Interactive input helpers (shared by wizard and slash commands) ──── *)
+
+let read_line_default default =
+  match String.trim (try input_line stdin with End_of_file -> "") with
+  | "" -> default
+  | s -> s
+
+(** Read a secret without echoing it to the terminal. *)
+let read_secret prompt =
+  print_ansi (cyan prompt);
+  flush stdout;
+  let read_plain () = try String.trim (input_line stdin) with End_of_file -> "" in
+  if not is_tty then read_plain ()
+  else begin
+    let open Unix in
+    try
+      let attr = tcgetattr stdin in
+      tcsetattr stdin TCSANOW { attr with c_echo = false };
+      let s = Fun.protect
+          ~finally:(fun () -> tcsetattr stdin TCSANOW attr; print_newline ())
+          read_plain
+      in s
+    with Unix_error _ -> read_plain ()
+  end
 
 (* ── Slash command helpers ────────────────────────────────────────────── *)
 
@@ -259,6 +293,14 @@ let handle_slash_command net clock st line =
       with exn ->
         println_ansi (red (Printf.sprintf "  ✗ %s" (Caravan_error.humanize exn))))
     end
+
+  | "/lisp" :: rest ->
+    let src = String.concat " " rest |> String.trim in
+    if src = "" then usage "/lisp" "<program>   e.g. /lisp (sum (range 1 101))"
+    else
+      (match Caravan.Lisp.run_to_string src with
+       | Ok out -> println_ansi (green ("  " ^ out))
+       | Error e -> println_ansi (red ("  ✗ " ^ e)))
 
   | "/nudge" :: rest ->
     let text = String.concat " " rest |> String.trim in
@@ -388,6 +430,41 @@ let handle_slash_command net clock st line =
   | ["/providers"] ->
     print_providers_table st.provider_name
 
+  | ["/subagents"] ->
+    let roster = Subagents.describe () in
+    if roster = [] then begin
+      println_ansi (dim "  No subagents configured.");
+      println_ansi (dim "  Declare [[subagents]] tables in the config to enable the delegate tool —");
+      println_ansi (dim "  see the Subagents chapter of the docs and examples/heterogeneous_agent_swarms/.")
+    end else begin
+      println_ansi (rule ~title:"Subagents" ());
+      let installed =
+        List.exists (fun t -> Tool.name_of_packed t = "delegate") (Session.tools st.session)
+      in
+      List.iter (fun ((cfg : Config.subagent_config), provider_status) ->
+        let health =
+          if String.length provider_status >= 10
+             && (String.sub provider_status 0 10 = "UNRESOLVED") then red "✗"
+          else if Re.execp (Re.compile (Re.str "unset")) provider_status then yellow "⚠"
+          else green "●"
+        in
+        println_ansi (Printf.sprintf "  %s %s %s %s"
+          health
+          (bold (Printf.sprintf "%-14s" cfg.name))
+          (Printf.sprintf "%-28s" (white (truncate_visible cfg.model 28)))
+          (dim provider_status));
+        if cfg.tool_names <> [] then
+          println_ansi (dim (Printf.sprintf "      tools: %s" (String.concat ", " cfg.tool_names)))
+      ) roster;
+      print_newline ();
+      if not (Subagents.enabled ()) then
+        println_ansi (yellow "  Disabled by enable_subagents = false — /config set enable_subagents true")
+      else if installed then
+        println_ansi (dim "  delegate tool is live in this session (governed by /permissions).")
+      else
+        println_ansi (yellow "  Configured but not loaded in this session — check warnings above/at startup.")
+    end
+
   | ["/tools"] ->
     let tools = Session.tools st.session in
     if tools = [] then println_ansi (yellow "  No tools registered.")
@@ -402,6 +479,56 @@ let handle_slash_command net clock st line =
       ) tools;
       println_ansi (dim "\n  ✎ = can modify state (governed by /permissions)")
     end
+
+  | "/config" :: "set" :: key :: rest when rest <> [] ->
+    let value = String.concat " " rest in
+    (match Config.set_value key value with
+     | Ok path ->
+       confirm "%s = %s  (saved to %s)" key value path;
+       (match key with
+        | "provider" | "model" | "base_url" ->
+          println_ansi (dim "  Applies to new sessions — use /provider or /model to switch live.")
+        | "permissions" ->
+          permission_mode := Config.get_permission_mode ()
+        | _ -> ())
+     | Error e -> println_ansi (red (Printf.sprintf "  ✗ %s" e)))
+
+  | ["/config"; "get"; key] ->
+    (match Config.get_string key with
+     | Some v -> println_ansi (kv_line key (white v))
+     | None ->
+       match Config.get_int key with
+       | Some v -> println_ansi (kv_line key (white (string_of_int v)))
+       | None ->
+         match Config.get_bool key with
+         | Some b -> println_ansi (kv_line key (white (string_of_bool b)))
+         | None -> println_ansi (yellow (Printf.sprintf "  '%s' is not set" key)))
+
+  | ["/config"; "keys"] ->
+    println_ansi (rule ~title:"Editable keys" ());
+    List.iter (fun (k, desc, accepts) ->
+      println_ansi (Printf.sprintf "  %s %s %s"
+        (cyan (Printf.sprintf "%-17s" k))
+        (Printf.sprintf "%-42s" (dim desc))
+        (dim accepts))
+    ) Config.editable_keys;
+    println_ansi (dim "\n  /config set <key> <value>   ·   /key <provider> to store an API key")
+
+  | "/key" :: rest ->
+    (match rest with
+     | [name] ->
+       (match Registry.find name with
+        | None -> println_ansi (red (Registry.unknown_provider_message name))
+        | Some e when not e.requires_key ->
+          println_ansi (yellow (Printf.sprintf "  %s is a local provider — no API key needed." e.name))
+        | Some e ->
+          let key = read_secret (Printf.sprintf "  Paste the %s API key (input hidden): " e.name) in
+          if key = "" then println_ansi (yellow "  Nothing entered — key unchanged.")
+          else
+            (match Config.set_api_key e.name key with
+             | Ok path -> confirm "API key for %s stored in %s (0600)" e.name path
+             | Error err -> println_ansi (red (Printf.sprintf "  ✗ %s" err))))
+     | _ -> usage "/key" "<provider>   (stores the key under [api_keys], input hidden)")
 
   | ["/config"] ->
     let cfg = Session.config st.session in
@@ -447,6 +574,21 @@ let handle_slash_command net clock st line =
       confirm "Stop sequences → %s" (String.concat ", " rest)
     end
 
+  (* Pre-run commands, reachable from inside the REPL too — one command
+     surface instead of two. They run as subprocesses so their own event
+     loops don't nest inside ours. *)
+  | ["/doctor"] ->
+    ignore (Sys.command (Filename.quote Sys.executable_name ^ " doctor"))
+
+  | ["/init"] ->
+    ignore (Sys.command (Filename.quote Sys.executable_name ^ " init"));
+    Config.reload ();
+    println_ansi (dim "  Config reloaded — /provider or /model to apply changes live.")
+
+  | ["/web"] ->
+    println_ansi (yellow "  The web UI blocks a terminal, so run it in another one:");
+    println_ansi (cyan "    caravan web    ")
+
   | cmd :: _ ->
     if String.length cmd > 0 && cmd.[0] = '/' then
       println_ansi (red (Printf.sprintf "  Unknown command: %s  (try /help)" cmd))
@@ -454,8 +596,42 @@ let handle_slash_command net clock st line =
 
 (* ── REPL loop ────────────────────────────────────────────────────────── *)
 
+(** Every REPL command, for the live completion palette (and /help). *)
+let palette : Editor.command_info list =
+  let c name args doc = Editor.{ name; args; doc } in
+  [ c "/agent" "<task>" "run the agent autonomously on a task";
+    c "/nudge" "<text>" "queue a steering note for the next model call";
+    c "/lisp" "<program>" "evaluate a Slip expression, e.g. (sum (range 1 11))";
+    c "/system" "[text]" "set (or clear) the system prompt";
+    c "/clear" "" "start a fresh conversation";
+    c "/model" "<name>" "switch model";
+    c "/models" "" "browse models on this provider";
+    c "/provider" "<name> [url]" "switch provider";
+    c "/providers" "" "provider table with key status";
+    c "/subagents" "" "configured subagent workers";
+    c "/permissions" "[mode]" "tool policy: auto | ask | readonly";
+    c "/temp" "<0.0-2.0>" "sampling temperature";
+    c "/top_p" "<0.0-1.0>" "nucleus sampling";
+    c "/top_k" "<n>" "top-k sampling";
+    c "/max_tokens" "<n>" "response token cap";
+    c "/seed" "<n>" "sampling seed";
+    c "/stop" "[seq …]" "stop sequences (empty clears)";
+    c "/memory" "<n>" "context window in messages (0 = unlimited)";
+    c "/summarise" "" "compact the conversation now";
+    c "/history" "" "show the conversation so far";
+    c "/export" "[file]" "save the conversation as JSON";
+    c "/tools" "" "available tools (✎ = mutating)";
+    c "/config" "[set k v | get k | keys]" "show or edit settings";
+    c "/key" "<provider>" "store an API key (hidden input)";
+    c "/doctor" "" "run diagnostics";
+    c "/init" "" "re-run the setup wizard";
+    c "/web" "" "how to launch the web UI";
+    c "/help" "" "all commands, grouped";
+    c "/quit" "" "exit Caravan";
+  ]
+
 let repl net clock st =
-  let prompt () =
+  let status_line () =
     if is_tty then begin
       let turns = List.length (Session.history st.session) in
       let status = render_status_bar
@@ -465,17 +641,14 @@ let repl net clock st =
         ~tokens_in:st.total_tokens_in
         ~tokens_out:st.total_tokens_out
       in
-      println_ansi (Printf.sprintf "\n%s" status);
-      print_ansi (Printf.sprintf "%s " (bold (cyan "❯")))
+      println_ansi (Printf.sprintf "\n%s" status)
     end;
     flush stdout
   in
+  let prompt_str = Printf.sprintf "%s " (bold (cyan "❯")) in
   let rec loop () =
-    prompt ();
-    let line_opt =
-      try Some (input_line stdin)
-      with End_of_file -> None
-    in
+    status_line ();
+    let line_opt = Editor.read_line ~prompt:prompt_str ~commands:palette () in
     let line = match line_opt with
       | Some l -> String.trim l
       | None -> "/quit"
@@ -560,8 +733,8 @@ let run_repl model provider_name base_url system =
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
     let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-    let sess = Session.create ~tools:(all_tools ()) model provider in
-    let sess = match system with Some s -> Session.set_system sess s | None -> sess in
+    let sess = make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system in
     let st = {
       session          = sess;
       provider_name;
@@ -602,7 +775,8 @@ let run_agent model provider_name base_url system max_turns quiet json_out task 
   let exit_code = ref 0 in
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
-    let sess = make_session ~provider_name ~model ~base_url ~system in
+    let sess = make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system in
     let config =
       let base = Agent.default_config () in
       { base with Agent.max_turns = Option.value ~default:base.Agent.max_turns max_turns }
@@ -711,7 +885,8 @@ let run_complete model provider_name base_url system prompt_text =
   let model = effective_model ~provider_name model in
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
-    let sess = make_session ~provider_name ~model ~base_url ~system in
+    let sess = make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system in
     (try
       let stream_enabled = Config.get_stream () in
       let (_sess, result) =
@@ -806,29 +981,6 @@ let providers_cmd =
   Cmd.v info Term.(const run_providers $ ladder_arg)
 
 (* ── init command (setup wizard) ──────────────────────────────────────── *)
-
-let read_line_default default =
-  match String.trim (try input_line stdin with End_of_file -> "") with
-  | "" -> default
-  | s -> s
-
-(** Read a secret without echoing it to the terminal. *)
-let read_secret prompt =
-  print_ansi (cyan prompt);
-  flush stdout;
-  let read_plain () = try String.trim (input_line stdin) with End_of_file -> "" in
-  if not is_tty then read_plain ()
-  else begin
-    let open Unix in
-    try
-      let attr = tcgetattr stdin in
-      tcsetattr stdin TCSANOW { attr with c_echo = false };
-      let s = Fun.protect
-          ~finally:(fun () -> tcsetattr stdin TCSANOW attr; print_newline ())
-          read_plain
-      in s
-    with Unix_error _ -> read_plain ()
-  end
 
 let toml_escape s =
   let buf = Buffer.create (String.length s) in
@@ -930,7 +1082,7 @@ let run_init () =
   let config_dir = Filename.dirname path in
   if not (Sys.file_exists config_dir) then (try Unix.mkdir config_dir 0o700 with _ -> ());
   let oc = open_out_gen [Open_creat; Open_trunc; Open_wronly] 0o600 path in
-  Printf.fprintf oc "# Generated by 'caravan init' — see docs/configuration.md for all keys.\n";
+  Printf.fprintf oc "# Generated by 'caravan init' — docs: https://adukhan99.github.io/Caravan/\n";
   Printf.fprintf oc "provider = \"%s\"\n" (toml_escape choice.name);
   Printf.fprintf oc "model = \"%s\"\n" (toml_escape model);
   (match base_url with
@@ -1027,6 +1179,23 @@ let run_doctor () =
      with _ -> warn "Cannot create transcript directory %s" dir)
   end;
 
+  (* Subagents *)
+  let roster = Subagents.describe () in
+  if roster <> [] then begin
+    if not (Subagents.enabled ()) then
+      warn "%d subagent(s) configured but enable_subagents = false" (List.length roster);
+    List.iter (fun ((cfg : Config.subagent_config), status) ->
+      if String.length status >= 10 && String.sub status 0 10 = "UNRESOLVED" then begin
+        fail ();
+        bad "Subagent '%s': provider '%s' unresolved (no [providers.%s] table, not in registry)"
+          cfg.name cfg.provider_ref cfg.provider_ref
+      end else if Re.execp (Re.compile (Re.str "unset")) status then
+        warn "Subagent '%s': %s" cfg.name status
+      else
+        ok "Subagent '%s' → %s via %s" cfg.name cfg.model status
+    ) roster
+  end;
+
   (* MCP servers *)
   let mcp_servers = Config.get_mcp_servers () in
   List.iter (fun (srv : Config.mcp_server_config) ->
@@ -1049,18 +1218,6 @@ let doctor_cmd =
   Cmd.v info Term.(const run_doctor $ const ())
 
 (* ── config command ───────────────────────────────────────────────────── *)
-
-let toml_value_of_string s =
-  match int_of_string_opt s with
-  | Some i -> Otoml.integer i
-  | None ->
-    match float_of_string_opt s with
-    | Some f -> Otoml.float f
-    | None ->
-      match String.lowercase_ascii s with
-      | "true" -> Otoml.boolean true
-      | "false" -> Otoml.boolean false
-      | _ -> Otoml.string s
 
 let run_config args =
   let path = Config.config_path () in
@@ -1086,21 +1243,15 @@ let run_config args =
          | Some b -> print_endline (string_of_bool b)
          | None -> Printf.eprintf "Key '%s' not set.\n%!" key; exit 1)
   | ["set"; key; value] ->
-    let ast =
-      if Sys.file_exists path then
-        (try Otoml.Parser.from_file path with _ -> Otoml.TomlTable [])
-      else Otoml.TomlTable []
-    in
-    let keys = String.split_on_char '.' key in
-    let ast' = Otoml.update ast keys (Some (toml_value_of_string value)) in
-    let dir = Filename.dirname path in
-    if not (Sys.file_exists dir) then (try Unix.mkdir dir 0o700 with _ -> ());
-    let oc = open_out_gen [Open_creat; Open_trunc; Open_wronly] 0o600 path in
-    output_string oc (Otoml.Printer.to_string ast');
-    close_out oc;
-    println_ansi (green (Printf.sprintf "✓ %s = %s" key value))
+    (match Config.set_value key value with
+     | Ok _ -> println_ansi (green (Printf.sprintf "✓ %s = %s" key value))
+     | Error e -> Printf.eprintf "Error: %s\n%!" e; exit 1)
+  | ["keys"] ->
+    List.iter (fun (k, desc, accepts) ->
+      Printf.printf "%-18s %-44s %s\n" k desc accepts
+    ) Config.editable_keys
   | _ ->
-    Printf.eprintf "Usage: caravan config [show|path|get KEY|set KEY VALUE]\n%!";
+    Printf.eprintf "Usage: caravan config [show|path|keys|get KEY|set KEY VALUE]\n%!";
     exit 2
 
 let config_cmd =
@@ -1121,10 +1272,10 @@ let run_web model provider_name base_url system port =
   init_mcp ();
   let _transcript = setup_frontend ~quiet:true () in
   let model = effective_model ~provider_name model in
-  let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-  let sess = Session.create ~tools:(all_tools ()) model provider in
-  let sess = match system with Some s -> Session.set_system sess s | None -> sess in
-  Web.serve ~port ~session:sess ~provider_name ~model
+  Web.serve ~port ~provider_name ~model
+    ~make_session:(fun env ->
+      make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system)
 
 let web_cmd =
   let port_arg =

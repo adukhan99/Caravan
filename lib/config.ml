@@ -419,3 +419,75 @@ let reload () =
   cached_ast := None;
   current_loaded_path := None
 
+(* ── Writing configuration ──────────────────────────────────────────────
+   One shared implementation behind `caravan config set`, the REPL's
+   /config set, /key, and the web cockpit — so a no-code user can edit
+   the config from any surface without touching a shell editor. *)
+
+(** Parse a CLI-style value into a TOML value: int, float, bool, string. *)
+let toml_value_of_string s =
+  match int_of_string_opt s with
+  | Some i -> Otoml.integer i
+  | None ->
+    match float_of_string_opt s with
+    | Some f -> Otoml.float f
+    | None ->
+      match String.lowercase_ascii s with
+      | "true" -> Otoml.boolean true
+      | "false" -> Otoml.boolean false
+      | _ -> Otoml.string s
+
+(** Set a (dotted) key to a TOML value in the config file, creating the
+    file/directories as needed. The file is (re)written 0600 and the
+    in-memory cache is refreshed. Returns the config path. *)
+let set_toml_value dotted_key (value : Otoml.t) : (string, string) result =
+  let path = config_path () in
+  try
+    let ast =
+      if Sys.file_exists path then
+        (try Otoml.Parser.from_file path with _ -> Otoml.TomlTable [])
+      else Otoml.TomlTable []
+    in
+    let keys = String.split_on_char '.' dotted_key |> List.filter (fun k -> k <> "") in
+    if keys = [] then Error "empty key"
+    else begin
+      let ast' = Otoml.update ast keys (Some value) in
+      let dir = Filename.dirname path in
+      if not (Sys.file_exists dir) then (try Unix.mkdir dir 0o700 with _ -> ());
+      let oc = open_out_gen [Open_creat; Open_trunc; Open_wronly] 0o600 path in
+      output_string oc (Otoml.Printer.to_string ast');
+      close_out oc;
+      (try Unix.chmod path 0o600 with _ -> ());
+      reload ();
+      Ok path
+    end
+  with exn -> Error (Printexc.to_string exn)
+
+(** [set_value "model" "llama3.2"] — string input variant with type
+    sniffing (ints, floats, bools become typed TOML values). *)
+let set_value dotted_key raw_value =
+  set_toml_value dotted_key (toml_value_of_string raw_value)
+
+(** Store an API key under [api_keys.<provider>]. Kept separate so all
+    call sites treat keys as strings verbatim (a numeric-looking key must
+    never be coerced to an integer). *)
+let set_api_key provider key =
+  set_toml_value ("api_keys." ^ provider) (Otoml.string key)
+
+(** Keys a settings UI should offer, with short descriptions and the
+    values they accept. Single source of truth for the REPL and web
+    settings surfaces. *)
+let editable_keys : (string * string * string) list = [
+  ("provider",    "Backend to talk to",                 "see `caravan providers`");
+  ("model",       "Model name",                         "provider-specific");
+  ("base_url",    "Endpoint override",                  "URL");
+  ("system",      "Default system prompt",              "text");
+  ("stream",      "Stream tokens as they arrive",       "true | false");
+  ("max_turns",   "Agent turn budget",                  "integer");
+  ("nudge",       "Budget nudges in agent loops",       "true | false");
+  ("permissions", "Mutating-tool policy",               "auto | ask | readonly");
+  ("transcript",  "JSONL session logs",                 "true | false");
+  ("strict_mode", "bash tool discipline",               "0 | 1 | 2");
+  ("enable_subagents", "Offer the delegate tool when [[subagents]] exist", "true | false");
+]
+

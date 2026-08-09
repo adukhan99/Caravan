@@ -1,5 +1,7 @@
 # Overhaul Notes — `overhaul` branch
 
+> Phase 2 additions are at the [bottom](#phase-2--the-second-brief).
+
 Running log of pain points found while crawling the code, and what was done
 about each. Kept up to date as work proceeds (newest entries appended per
 section). Written for review; delete after merging if unwanted.
@@ -119,9 +121,56 @@ section). Written for review; delete after merging if unwanted.
   client — one code path for every provider, tool-calling included. The
   compat layer's minor limitations are documented in `docs/providers.md`.
 - **Web UI** (`caravan web`) is a single self-contained HTML page embedded in
-  the binary, served on localhost only, streaming over SSE. No JS toolchain,
-  no assets on disk — hygienic by construction.
+  the binary, served on localhost only (request/response JSON; token
+  streaming is a possible future upgrade). No JS toolchain, no assets on
+  disk — hygienic by construction.
 - **Nudge**: two forms. `/nudge <text>` in the REPL queues a steering note
   injected before the next model call; in agent loops, an automatic nudge
   reminds the model of the task and remaining turn budget at the halfway
   point and again near exhaustion.
+
+---
+
+## Phase 2 — the second brief
+
+### Decisions worth human review
+
+1. **minttea declined, hand-rolled editor chosen** (Task 3). minttea
+   0.0.2 hard-depends on the Riot actor runtime (0.0.5) — a second
+   scheduler that would contend with Eio in one binary, and both are
+   pre-0.1. `bin/editor.ml` (~350 dependency-free lines) delivers the
+   asked-for features: arrows/Home/End/Ctrl-chords, persistent history,
+   live slash palette with Tab completion, Ctrl-C line-cancel. Verified
+   with a scripted PTY harness. If minttea matures onto a neutral event
+   loop, transcribing the render layer later remains easy — the widget
+   vocabulary (Ui.panel/rule/palette) is already isolated.
+2. **Slip fuel semantics** (Task 4): the step cap counts *interpreter*
+   steps; native data ops (sum/sort/where over a million rows) cost one
+   step. This makes the engine useful for real data while keeping
+   lambda-driven loops bounded. Recursion is allowed (define is visible
+   to the closure via the shared env) — the cap is the safety net.
+   `eval` runs quoted code in a fresh environment with the same fuel.
+3. **Subagents are config-first, failure-tolerant** (Task 5): a broken
+   [[subagents]] entry warns and is skipped — startup never fails because
+   a worker is misconfigured. Workers always get `finish` injected.
+   `delegate` is classed mutating so ask/readonly govern the whole tree.
+4. **Web config editing is whitelisted** (Task 2): POST /api/config only
+   accepts `Config.editable_keys`; arbitrary TOML paths (e.g.
+   `api_keys.openai`) are rejected there — keys go through POST /api/key,
+   which never echoes values back. "ask" permission mode degrades to
+   deny on the web (no prompt surface).
+5. **Docs site = mdBook + odoc** (Task 1): mdBook's sidebar/search gives
+   the readthedocs feel with a single static binary in CI (no Python, no
+   theme code in-repo). Sources stay plain markdown in docs/src/, so
+   GitHub renders them too. Mermaid renders client-side on the published
+   site via a tiny theme JS shim (CDN); GitHub renders the same fences
+   natively. The old mermaid-CLI/puppeteer render pipeline was deleted.
+
+### Experimental features that may warrant attention
+- Slip's `eval`/`read` reflection: sandboxed and fuel-shared, but it is
+  the most "creative" surface — if it ever worries anyone, deleting the
+  two builtins is a 5-line change.
+- The PTY line editor assumes ANSI/VT sequences (fine everywhere Linux/
+  macOS; untested on Windows terminals — as is the rest of Caravan).
+- Web settings panel writes live to the same config the CLI reads;
+  concurrent writes last-writer-wins (single-user tool, acceptable).

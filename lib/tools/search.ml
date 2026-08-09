@@ -74,16 +74,7 @@ module Search : TOOL = struct
       ("Accept",                "application/json");
       ("X-Subscription-Token",  match get_api_key () with Some k -> k | None -> "");
     ] in
-    let https uri sock =
-      let host = Uri.host uri |> Option.value ~default:"" in
-      let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
-      let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in
-      let ssl_sock_raw = Eio_ssl.Context.ssl_socket ctx in
-      Ssl.set_client_SNI_hostname ssl_sock_raw host;
-      let ssl_sock = Eio_ssl.connect ctx in
-      (ssl_sock :> _ Eio.Flow.two_way)
-    in
-    let client = Cohttp_eio.Client.make ~https:(Some https) net in
+    let client = Caravan.Tls.make_client net uri in
     Eio.Switch.run @@ fun sw ->
     let (resp, body) = Cohttp_eio.Client.get client ~sw ~headers uri in
     let status = Http.Response.status resp |> Http.Status.to_int in
@@ -107,16 +98,14 @@ module Search : TOOL = struct
       in
       Ok results
 
-  type _ Effect.t += Get_net : _ Eio.Net.t Effect.t
-
   let execute input =
     match get_api_key () with
     | None ->
       Error
-        "No Search API key found. Set SEARCH_API_KEY or add \
-         search_api_key under [tools] in ~/.caravan/config.toml."
+        "No Search API key found. Set the SEARCH_API_KEY environment \
+         variable or add search_api_key to ~/.caravan/config.toml."
     | Some _api_key ->
-      (match Effect.perform Get_net with
+      (match Caravan.Effects.get_net () with
        | net -> do_search net input
        | exception Effect.Unhandled _ ->
          Domain.join (Domain.spawn (fun () ->

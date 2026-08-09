@@ -117,27 +117,24 @@ let history_for_llm sess =
      | { role = System; _ } :: _ -> compact_hist
      | rest -> sm :: rest)
 
-let execute_tool_calls net clock sess tcs =
-  let verbose = Config.get_spinner_verbose () in
+let execute_tool_calls _net clock sess tcs =
   List.map (fun tc ->
     match Tool.find_tool sess.tools tc.name with
     | None ->
       let msg = Printf.sprintf "Tool '%s' not found in registered tools." tc.name in
-      Printf.eprintf "%s: %s → %s\n%!" (Ui.magenta "[Tool]") tc.name (Ui.red "NOT FOUND");
+      Trace.emit (Trace.Tool_not_found { name = tc.name });
       tool_msg tc.id msg
     | Some packed ->
-      if verbose then
-        Printf.eprintf "%s: %s(%s)\n%!" (Ui.magenta "[Tool]") (Ui.bold tc.name) (Ui.dim tc.args);
+      Trace.emit (Trace.Tool_call_start { name = tc.name; args = tc.args });
       let verb = Config.pick_verb (Config.get_verbs tc.name) in
       let enabled = Config.get_spinner_enabled () in
+      let t0 = Unix.gettimeofday () in
       let output_str = Ui.with_spinner clock verb enabled (fun () -> Tool.dispatch packed tc.args) in
-      if verbose then begin
-        if tc.name = "finish" then
-          Ui.println_ansi (Ui.bold (Ui.green output_str))
-        else
-          Printf.eprintf "%s: %s\n%!" (Ui.dim "[Tool Result]") (Ui.dim output_str)
-      end else if tc.name = "finish" then
-        Ui.println_ansi (Ui.bold (Ui.green output_str));
+      let duration = Unix.gettimeofday () -. t0 in
+      if tc.name = "finish" then
+        Trace.emit (Trace.Task_finished { summary = output_str })
+      else
+        Trace.emit (Trace.Tool_call_end { name = tc.name; output = output_str; duration });
       tool_msg tc.id output_str
   ) tcs
 
@@ -160,10 +157,12 @@ let summarise net clock sess =
     in
     let verb = Config.pick_verb (Config.get_verbs "summarizing") in
     let enabled = Config.get_spinner_enabled () in
+    Trace.emit Trace.Summarize_start;
     let result = Ui.with_spinner clock verb enabled (fun () ->
       Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:[] sess.provider [user_msg prompt]
     ) in
     let summary_content = String.trim result.value.content in
+    Trace.emit (Trace.Summarize_end { summary = summary_content });
     let new_mem_t =
       let open Memory.Summary in
       let mem = create ~max_messages:sess.cfg.memory_size () in
@@ -173,9 +172,23 @@ let summarise net clock sess =
     let new_sess = { sess with memory = new_mem_t; turn_idx = 0 } in
     (new_sess, summary_content)
 
+(** Why a conversation run ended. Threaded into the returned
+    [result_with_meta.finish_reason] so callers (notably [Agent]) can tell
+    a genuine [finish] tool call apart from a turn-budget stop without
+    scanning history. *)
+type done_reason =
+  | Via_finish_tool
+  | Via_max_turns
+  | Via_plain_reply
+
+let done_reason_string = function
+  | Via_finish_tool -> "finish_tool"
+  | Via_max_turns   -> "max_turns"
+  | Via_plain_reply -> "plain_reply"
+
 type step_outcome =
   | Continue of t
-  | Done     of t * string
+  | Done     of t * string * done_reason
 
 let run_turn_step ?max_turns ?on_turn net clock sess (reply : chat_message) =
   let Memory.Mem ((module M), mem) = sess.memory in
@@ -220,30 +233,38 @@ let run_turn_step ?max_turns ?on_turn net clock sess (reply : chat_message) =
         if reply.content = "" then finish_output
         else reply.content ^ "\n\n" ^ finish_output
       in
-      Done (sess_after_sum, final_content)
+      Done (sess_after_sum, final_content, Via_finish_tool)
     else
       (match max_turns with
        | Some max_t when sess_after_sum.turn_idx >= max_t ->
-         Done (sess_after_sum, "Maximum turns reached without completion.")
+         Done (sess_after_sum, "Maximum turns reached without completion.", Via_max_turns)
        | _ ->
          Continue sess_after_sum)
   | _ ->
-    Done (new_sess, reply.content)
+    Done (new_sess, reply.content, Via_plain_reply)
+
+let emit_assistant_reply (reply : chat_message) =
+  let tool_call_names =
+    match reply.tool_calls with
+    | None -> []
+    | Some tcs -> List.map (fun (tc : tool_call) -> tc.name) tcs
+  in
+  Trace.emit (Trace.Assistant_reply { content = reply.content; tool_call_names })
 
 let rec run_conversations ?max_turns ?on_turn net clock sess =
   let verb = Config.pick_verb (Config.get_verbs "thinking") in
   let enabled = Config.get_spinner_enabled () in
-  let verbose = Config.get_spinner_verbose () in
   let result = Ui.with_spinner clock verb enabled (fun () ->
     Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:sess.tools sess.provider (history_for_llm sess)
   ) in
-  if not verbose then
-    Ui.println_ansi (Printf.sprintf "\n%s" (Ui.bold (Ui.green "Assistant:")));
+  emit_assistant_reply result.value;
   let outcome = run_turn_step ?max_turns ?on_turn net clock sess result.value in
   match outcome with
   | Continue sess' -> run_conversations ?max_turns ?on_turn net clock sess'
-  | Done (sess', content) ->
-      (sess', { result with value = { result.value with content }; turn_count = Some sess'.turn_idx })
+  | Done (sess', content, reason) ->
+      (sess', { result with value = { result.value with content };
+                            finish_reason = Some (done_reason_string reason);
+                            turn_count = Some sess'.turn_idx })
 
 let turn net clock sess user_input =
   let user = user_msg user_input in
@@ -254,7 +275,6 @@ let turn net clock sess user_input =
 let rec run_conversations_stream ?max_turns ?on_turn net clock sess ~on_token =
   let verb = Config.pick_verb (Config.get_verbs "thinking") in
   let enabled = Config.get_spinner_enabled () in
-  let verbose = Config.get_spinner_verbose () in
   let result_with_meta =
     Eio.Switch.run (fun sw ->
       let promise, resolver = Eio.Promise.create () in
@@ -264,8 +284,7 @@ let rec run_conversations_stream ?max_turns ?on_turn net clock sess ~on_token =
         if !first_token then begin
           first_token := false;
           Eio.Promise.resolve resolver ();
-          if not verbose then
-            Ui.println_ansi (Printf.sprintf "\n%s" (Ui.bold (Ui.green "Assistant:")));
+          Trace.emit Trace.Stream_start
         end;
         on_token token
       in
@@ -274,11 +293,14 @@ let rec run_conversations_stream ?max_turns ?on_turn net clock sess ~on_token =
         (fun () -> Provider.stream_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:sess.tools ~on_token:wrapped_on_token sess.provider (history_for_llm sess))
     )
   in
+  emit_assistant_reply result_with_meta.value;
   let outcome = run_turn_step ?max_turns ?on_turn net clock sess result_with_meta.value in
   match outcome with
   | Continue sess' -> run_conversations_stream ?max_turns ?on_turn net clock sess' ~on_token
-  | Done (sess', content) ->
-      (sess', { result_with_meta with value = { result_with_meta.value with content }; turn_count = Some sess'.turn_idx })
+  | Done (sess', content, reason) ->
+      (sess', { result_with_meta with value = { result_with_meta.value with content };
+                                      finish_reason = Some (done_reason_string reason);
+                                      turn_count = Some sess'.turn_idx })
 
 let turn_stream net clock sess user_input ~on_token =
   let user = user_msg user_input in

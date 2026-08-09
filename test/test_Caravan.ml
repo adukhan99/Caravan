@@ -501,7 +501,7 @@ let%expect_test "session_summarise" =
     Format.printf "Content: %s\n" msg.Types.content
   );
   [%expect {|
-    ⠋ Compressing...[KThis is a summary.
+    This is a summary.
     History length: 1
     Role: System
     Content: [Conversation summary]: This is a summary.
@@ -720,7 +720,7 @@ let%test_unit "agent_turn_increment_and_max_turns" =
     let sess = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
     
     let on_turn current max = turn_calls := (current, max) :: !turn_calls in
-    let agent_cfg = Agent.{ max_turns = 5; continue_prompt = "continue" } in
+    let agent_cfg = Agent.{ max_turns = 5; continue_prompt = "continue"; nudge = false } in
     let res = Agent.run ~config:agent_cfg ~on_turn env#net env#clock sess "Execute multi-turn task" in
     (match res with
      | Ok (final_sess, _meta) ->
@@ -732,7 +732,7 @@ let%test_unit "agent_turn_increment_and_max_turns" =
     call_count := 0;
     turn_calls := [];
     let sess2 = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
-    let agent_cfg_low = Agent.{ max_turns = 2; continue_prompt = "continue" } in
+    let agent_cfg_low = Agent.{ max_turns = 2; continue_prompt = "continue"; nudge = false } in
     let res_low = Agent.run ~config:agent_cfg_low ~on_turn env#net env#clock sess2 "Task max turns test" in
     (match res_low with
      | Error "Maximum turns reached without completion." -> ()

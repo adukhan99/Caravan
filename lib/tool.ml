@@ -61,8 +61,10 @@ let dispatch (Tool (module T) as tool) (args_json : string) : string =
     try Effects.ask_permission T.name args_json
     with Effect.Unhandled _ -> true
   in
-  if not allowed then
+  if not allowed then begin
+    Trace.emit (Trace.Permission_denied { name = T.name });
     Printf.sprintf "Error: Permission denied for tool '%s'." T.name
+  end
   else
     try Effects.exec_tool T.name args_json
     with Effect.Unhandled _ -> execute_packed tool args_json

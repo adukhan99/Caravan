@@ -52,7 +52,7 @@ let make_body cfg ?model ?options ?tools msgs ~stream =
   let base_fields = List.concat [
     [
       ("model",    `String effective_model);
-      ("messages", messages_to_json msgs);
+      ("messages", messages_to_wire_json msgs);
       ("stream",   `Bool stream);
     ];
     options_to_json_fields effective_options;
@@ -86,19 +86,7 @@ let auth_headers cfg =
   | None -> h
   | Some id -> ("OpenAI-Organization", id) :: h
 
-let https_handler uri sock =
-  let host = Uri.host uri |> Option.value ~default:"" in
-  let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
-  let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in
-  let ssl_sock_raw = Eio_ssl.Context.ssl_socket ctx in
-  Ssl.set_client_SNI_hostname ssl_sock_raw host;
-  let ssl_sock = Eio_ssl.connect ctx in
-  (ssl_sock :> _ Eio.Flow.two_way)
-
-let make_client net uri =
-  match Uri.scheme uri with
-  | Some "https" -> Cohttp_eio.Client.make ~https:(Some https_handler) net
-  | _ -> Cohttp_eio.Client.make ~https:None net
+let make_client net uri = Caravan.Tls.make_client net uri
 
 let read_body (body : Cohttp_eio.Body.t) =
   Eio.Buf_read.(of_flow body ~max_size:max_int |> take_all)

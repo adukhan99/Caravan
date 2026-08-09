@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, overhaul]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml-compiler: ["5.2.0", "5.3.0"]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup OCaml ${{ matrix.ocaml-compiler }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-compiler }}
+          apt-packages: libssl-dev libgmp-dev pkg-config
+
+      - name: Install dependencies
+        run: |
+          opam pin add -n Caravan .
+          opam install . --deps-only --with-test -y
+
+      - name: Build
+        run: opam exec -- dune build
+
+      - name: Test
+        run: opam exec -- dune test
+
+      - name: Check opam file is in sync with dune-project
+        run: |
+          opam exec -- dune build Caravan.opam
+          git diff --exit-code Caravan.opam

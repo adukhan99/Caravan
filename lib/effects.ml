@@ -4,6 +4,25 @@ type _ Effect.t +=
   | Log_event : { level : string; message : string } -> unit Effect.t
   | Spawn_subagent : { role : string; task : string } -> (string, string) result Effect.t
   | Parse_warning : { field : string; message : string } -> unit Effect.t
+  | Get_net : Eio_unix.Net.t Effect.t
+      (** Request the ambient network capability. Handled by front-ends via
+          [with_net]; network tools perform this instead of spawning their
+          own event loop. *)
+
+let get_net () = Effect.perform Get_net
+
+(** Run [f] with [Get_net] answered by [net]. Front-ends wrap their entire
+    session in this so that tools (fetch, search, MCP over HTTP, ...) reuse
+    the existing event loop instead of booting one per call. *)
+let with_net (net : Eio_unix.Net.t) f =
+  Effect.Deep.try_with f () {
+    effc = fun (type a) (eff : a Effect.t) ->
+      match eff with
+      | Get_net ->
+        Some (fun (k : (a, _) Effect.Deep.continuation) ->
+          Effect.Deep.continue k net)
+      | _ -> None
+  }
 
 let exec_tool tool_name args =
   Effect.perform (Exec_tool { tool_name; args })

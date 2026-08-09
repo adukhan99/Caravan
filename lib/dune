@@ -5,6 +5,8 @@
   eio
   eio_main
   cohttp-eio
+  ssl
+  eio-ssl
   uri
   yojson
   re
@@ -15,6 +17,7 @@
  (preprocess
   (pps ppx_let ppx_yojson_conv))
  (modules
+  Version
   Caravan_error
   Permission
   Effects
@@ -24,6 +27,8 @@
   Formatter
   Memory
   Parser
+  Trace
+  Tls
   Ui
   Monitor
   Provider

@@ -41,8 +41,12 @@ end = struct
     len         : int;
   }
 
+  (* A window of 0 (or below) means "unlimited" everywhere in Caravan;
+     normalising here keeps every construction site honest. *)
+  let normalize_window w = if w <= 0 then max_int else w
+
   let make ?(window = 20) () =
-    { system_msgs = []; front = []; rear = []; window; len = 0 }
+    { system_msgs = []; front = []; rear = []; window = normalize_window window; len = 0 }
 
   let create () = make ()
 
@@ -67,7 +71,7 @@ end = struct
       if dq.len > dq.window then drop_oldest dq else dq
 
   let set_window mem new_window =
-    let window = if new_window = 0 then max_int else new_window in
+    let window = normalize_window new_window in
     let rec prune d =
       if d.len > d.window then prune (drop_oldest d) else d
     in

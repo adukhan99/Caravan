@@ -50,7 +50,10 @@ module Delegate = struct
   let name    = "delegate"
   let aliases = ["subagent"; "spawn_worker"; "offload"]
 
-  let description =
+  (* NOTE: must stay a function — the registry is only populated by [make],
+     which runs after this module is initialised. A plain [let] here would
+     freeze the description as "(no subagents configured)" forever. *)
+  let description_now () =
     let base =
       "Delegate an atomic, well-specified task to a specialised local subagent. \
        The subagent starts cold (no conversation history) and returns only a \
@@ -64,6 +67,8 @@ module Delegate = struct
         |> String.concat ", "
       in
       base ^ "Available subagents: " ^ names ^ "."
+
+  let description = description_now ()
 
   type input  = { subagent : string; task : string }
   type output = string
@@ -159,7 +164,9 @@ let make
        record type — [include Delegate] would make it abstract via the TOOL sig. *)
     let name          = Delegate.name
     let aliases       = Delegate.aliases
-    let description   = Delegate.description
+    (* Computed here, after the registry is populated, so the model sees
+       the actual subagent roster. *)
+    let description   = Delegate.description_now ()
     type input        = Delegate.input = { subagent : string; task : string }
     type output       = string
     type _ Effect.t  += Exec : input -> output Effect.t

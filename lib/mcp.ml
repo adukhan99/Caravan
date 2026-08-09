@@ -34,7 +34,7 @@ let rec read_response_matching client expected_id =
       match Yojson.Safe.from_string line with
       | exception (Eio.Cancel.Cancelled _ as exn) -> raise exn
       | exception _ ->
-        Printf.eprintf "[MCP stdout debug]: %s\n%!" line;
+        Trace.log "debug" "[MCP stdout] %s" line;
         read_response_matching client expected_id
       | json ->
         let open Yojson.Safe.Util in
@@ -47,7 +47,7 @@ let rec read_response_matching client expected_id =
              let params = json |> member "params" in
              let text = params |> member "text" |> to_string_option |> Option.value ~default:"" in
              let level = params |> member "level" |> to_string_option |> Option.value ~default:"info" in
-             Printf.eprintf "[MCP Log %s]: %s\n%!" level text
+             Trace.log level "[MCP %s] %s" client.name text
            | _ -> ());
           read_response_matching client expected_id
 
@@ -137,7 +137,7 @@ let spawn_server_unix name command args =
       try
         let rec loop () =
           let line = input_line err_chan in
-          Printf.eprintf "[MCP Stderr (%s)]: %s\n%!" name line;
+          Trace.log "warn" "[MCP stderr %s] %s" name line;
           loop ()
         in loop ()
       with _ -> try close_in_noerr err_chan with _ -> ()
@@ -169,7 +169,7 @@ let connect ?mgr ?sw name command args =
       ("capabilities", `Assoc []);
       ("clientInfo", `Assoc [
         ("name", `String "Caravan");
-        ("version", `String "0.1.0");
+        ("version", `String Version.v);
       ]);
     ] in
     match send_request client "initialize" (Some init_params) with
@@ -181,7 +181,7 @@ let connect ?mgr ?sw name command args =
 let list_tools client =
   match send_request client "tools/list" (Some (`Assoc [])) with
   | Error err ->
-    Printf.eprintf "Failed to list tools for %s: %s\n%!" client.name err;
+    Trace.log "error" "MCP: failed to list tools for %s: %s" client.name err;
     []
   | Ok json ->
     let open Yojson.Safe.Util in
@@ -198,7 +198,7 @@ let list_tools client =
     with
     | Eio.Cancel.Cancelled _ as exn -> raise exn
     | exn ->
-      Printf.eprintf "Error parsing tools for %s: %s\n%!" client.name (Printexc.to_string exn);
+      Trace.log "error" "MCP: error parsing tools for %s: %s" client.name (Printexc.to_string exn);
       []
 
 let parse_call_response json =
@@ -268,23 +268,23 @@ let () =
 let init_mcp_servers ?mgr ?sw configs =
   close_all ();
   let clients = List.filter_map (fun (cfg : Config.mcp_server_config) ->
-    Printf.eprintf "[MCP] Connecting to server '%s' (%s %s %s)...\n%!"
+    Trace.log "info" "MCP: connecting to '%s' (%s %s %s)"
       cfg.name cfg.transport cfg.command (String.concat " " cfg.args);
     match connect ?mgr ?sw cfg.name cfg.command cfg.args with
     | Ok client ->
-      Printf.eprintf "[MCP] Connected successfully to '%s'.\n%!" cfg.name;
+      Trace.log "info" "MCP: connected to '%s'" cfg.name;
       Some client
     | Error err ->
-      Printf.eprintf "[MCP Error] Failed to connect to '%s': %s\n%!" cfg.name err;
+      Trace.log "error" "MCP: failed to connect to '%s': %s" cfg.name err;
       None
   ) configs in
   global_registry.clients <- clients;
   let all_tools = List.concat_map (fun client ->
     let tools = list_tools client in
-    Printf.eprintf "[MCP] Discovered %d tools from '%s'.\n%!" (List.length tools) client.name;
+    Trace.log "info" "MCP: discovered %d tools from '%s'" (List.length tools) client.name;
     List.map (fun t ->
       let packed = make_packed_tool client t in
-      Printf.eprintf "  - Registered tool: %s\n%!" (Tool.name_of_packed packed);
+      Trace.log "info" "MCP: registered tool %s" (Tool.name_of_packed packed);
       packed
     ) tools
   ) clients in

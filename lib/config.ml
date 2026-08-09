@@ -361,3 +361,61 @@ let pick_verb = function
   | [v] -> v
   | vs  -> List.nth vs (Random.int (List.length vs))
 
+(* ── Overhaul additions ─────────────────────────────────────────────────── *)
+
+(** Directory holding Caravan state (config, logs). *)
+let caravan_dir () =
+  match Sys.getenv_opt "CARAVAN_CONFIG" with
+  | Some p when p <> "" -> Filename.dirname p
+  | _ ->
+    let home = match Sys.getenv_opt "HOME" with Some h -> h | None -> "." in
+    Filename.concat home ".caravan"
+
+(** Where session transcripts (JSONL event logs) are written. *)
+let log_dir () = Filename.concat (caravan_dir ()) "logs"
+
+(** Whether to write a JSONL transcript per session (default: true). *)
+let get_transcript_enabled () =
+  get_bool_opt (Some "CARAVAN_TRANSCRIPT") "transcript" |> Option.value ~default:true
+
+(** Tool permission mode: "auto" (allow all), "ask" (prompt for mutating
+    tools), "readonly" (deny mutating tools). Default "auto". *)
+let get_permission_mode () =
+  get_string_opt (Some "CARAVAN_PERMISSIONS") "permissions"
+  |> Option.value ~default:"auto"
+  |> String.lowercase_ascii
+
+(** Agent turn budget (CLI flag > env > TOML > default 10). *)
+let get_max_turns () =
+  get_int_opt (Some "CARAVAN_MAX_TURNS") "max_turns" |> Option.value ~default:10
+
+(** Whether the agent loop injects budget-awareness nudges (default: true). *)
+let get_nudge_enabled () =
+  get_bool_opt (Some "CARAVAN_NUDGE") "nudge" |> Option.value ~default:true
+
+(** Look up an API key: [env_var] first, then [api_keys.<name>] in TOML,
+    then a legacy top-level key if given. *)
+let get_api_key ~env_var ~name ?legacy_key () =
+  match Sys.getenv_opt env_var with
+  | Some k when k <> "" -> Some k
+  | _ ->
+    let from_table =
+      match get_ast () with
+      | None -> None
+      | Some ast ->
+        (try Some (Otoml.find ast Otoml.get_string ["api_keys"; name])
+         with _ -> None)
+    in
+    (match from_table with
+     | Some _ as r -> r
+     | None ->
+       (match legacy_key with
+        | Some k -> get_string k
+        | None -> None))
+
+(** Force the cached TOML AST to be re-read (used by tests and
+    [caravan config set]). *)
+let reload () =
+  cached_ast := None;
+  current_loaded_path := None
+

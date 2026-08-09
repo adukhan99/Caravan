@@ -169,6 +169,28 @@ let chat_message_of_json json =
 let messages_to_json msgs =
   `List (List.map chat_message_to_json msgs)
 
+(** Wire format: what actually gets sent to a chat-completions API.
+    Unlike [chat_message_to_json] (used for exports and persistence), this
+    omits Caravan-internal fields such as [timestamp] — strict
+    OpenAI-compatible endpoints reject unknown message fields. *)
+let chat_message_to_wire_json msg =
+  let base = [
+    ("role",    `String (match msg.role with Tool _ -> "tool" | r -> role_to_string r));
+    ("content", if msg.content = "" && msg.tool_calls <> None then `Null else `String msg.content);
+  ] in
+  let base = match msg.tool_calls with
+    | Some tcs -> ("tool_calls", `List (List.map tool_call_to_json tcs)) :: base
+    | None -> base
+  in
+  let base = match msg.role with
+    | Tool id -> ("tool_call_id", `String id) :: base
+    | _ -> base
+  in
+  `Assoc base
+
+let messages_to_wire_json msgs =
+  `List (List.map chat_message_to_wire_json msgs)
+
 type usage = {
   prompt_tokens     : int;
   completion_tokens : int;

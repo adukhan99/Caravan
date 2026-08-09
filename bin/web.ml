@@ -59,11 +59,57 @@ let html_page = {html|<!doctype html>
          align-items: center; gap: 5px; user-select: none; }
   .spin { display: inline-block; animation: r 1s linear infinite; }
   @keyframes r { to { transform: rotate(360deg); } }
+  #gear { margin-left: auto; background: none; border: 1px solid var(--line);
+          color: var(--dim); border-radius: 6px; padding: 3px 10px;
+          font: inherit; cursor: pointer; }
+  #gear:hover { color: var(--amber); border-color: var(--amber); }
+  #settings { position: fixed; inset: 0; background: rgba(10,8,6,.75);
+              display: none; align-items: flex-start; justify-content: center;
+              overflow-y: auto; padding: 40px 16px; z-index: 10; }
+  #settings.open { display: flex; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 12px; max-width: 640px; width: 100%;
+          padding: 20px 22px; }
+  .card h2 { margin: 0 0 4px; font-size: 15px; color: var(--amber); }
+  .card .path { color: var(--dim); font-size: 11.5px; margin-bottom: 14px; }
+  .srow { display: flex; gap: 10px; align-items: center; margin: 7px 0; }
+  .srow label { width: 150px; color: var(--ink); font-size: 13px; }
+  .srow input, .srow select { flex: 1; background: var(--bg);
+          border: 1px solid var(--line); color: var(--ink); font: inherit;
+          font-size: 13px; border-radius: 6px; padding: 5px 8px; }
+  .srow .hint { width: 170px; color: var(--dim); font-size: 11px; }
+  .srow button { background: var(--teal); color: #14100c; border: none;
+          border-radius: 6px; padding: 5px 10px; font: inherit;
+          font-size: 12.5px; cursor: pointer; }
+  .sect { border-top: 1px solid var(--line); margin-top: 14px;
+          padding-top: 12px; }
+  #smsg { font-size: 12px; min-height: 16px; margin-top: 8px; }
+  #smsg.ok { color: var(--teal); } #smsg.err { color: var(--rose); }
 </style>
 <header>
   <h1>☾ CARAVAN</h1>
   <span class="meta" id="meta">…</span>
+  <button id="gear" title="settings">⚙ settings</button>
 </header>
+<div id="settings">
+  <div class="card">
+    <h2>Settings</h2>
+    <div class="path" id="cfgpath"></div>
+    <div id="srows"></div>
+    <div class="sect">
+      <div class="srow">
+        <label>API key</label>
+        <select id="kprov"></select>
+        <input type="password" id="kval" placeholder="paste key — stored 0600, never displayed">
+        <button id="ksave">save</button>
+      </div>
+    </div>
+    <div id="smsg"></div>
+    <div class="sect" style="text-align:right">
+      <button id="sclose" style="background:var(--line);color:var(--ink)">close</button>
+    </div>
+  </div>
+</div>
 <div id="log"></div>
 <form id="f">
   <div class="bar">
@@ -145,6 +191,69 @@ document.getElementById('f').addEventListener('submit', async (ev) => {
   q.focus();
   refreshMeta();
 });
+
+// ── Settings modal ─────────────────────────────────────────────────────
+const modal = document.getElementById('settings');
+const smsg = document.getElementById('smsg');
+function note(ok, text) { smsg.className = ok ? 'ok' : 'err'; smsg.textContent = text; }
+
+async function openSettings() {
+  const r = await fetch('/api/config');
+  const cfg = await r.json();
+  document.getElementById('cfgpath').textContent = cfg.path;
+  const rows = document.getElementById('srows');
+  rows.innerHTML = '';
+  cfg.settings.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const lbl = document.createElement('label');
+    lbl.textContent = s.key; lbl.title = s.description;
+    const inp = document.createElement('input');
+    inp.value = s.value === null ? '' : s.value;
+    inp.placeholder = '(unset)';
+    const hint = document.createElement('span');
+    hint.className = 'hint'; hint.textContent = s.accepts;
+    const btn = document.createElement('button');
+    btn.textContent = 'save';
+    btn.onclick = async () => {
+      const rr = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({key: s.key, value: inp.value})
+      });
+      const j = await rr.json();
+      note(!j.error, j.error || ('saved ' + s.key + (j.note ? ' — ' + j.note : '')));
+      refreshMeta();
+    };
+    row.append(lbl, inp, hint, btn);
+    rows.appendChild(row);
+  });
+  const sel = document.getElementById('kprov');
+  sel.innerHTML = '';
+  cfg.providers.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.name;
+    o.textContent = p.name + (p.key_set ? ' ✓' : ' — no key');
+    sel.appendChild(o);
+  });
+  smsg.textContent = '';
+  modal.classList.add('open');
+}
+document.getElementById('gear').onclick = openSettings;
+document.getElementById('sclose').onclick = () => modal.classList.remove('open');
+modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+document.getElementById('ksave').onclick = async () => {
+  const kv = document.getElementById('kval');
+  const rr = await fetch('/api/key', {
+    method: 'POST',
+    headers: {'content-type': 'application/json'},
+    body: JSON.stringify({provider: document.getElementById('kprov').value, key: kv.value})
+  });
+  const j = await rr.json();
+  note(!j.error, j.error || 'API key stored');
+  if (!j.error) { kv.value = ''; openSettings(); }
+};
+
 refreshMeta();
 </script>
 |html}
@@ -170,6 +279,16 @@ let html_response () =
     ~headers:(Http.Header.of_list [("content-type", "text/html; charset=utf-8")])
     ~status:`OK ~body:html_page ()
 
+(** Web permission policy: no interactive prompt is possible, so "ask"
+    degrades to deny-with-explanation rather than silently allowing. *)
+let web_permission_policy () =
+  let mode = Config.get_permission_mode () in
+  fun name _args ->
+    if not (Permission.is_mutating name) then true
+    else match mode with
+      | "auto" -> true
+      | _ -> false   (* ask | readonly: no prompt surface here *)
+
 let record_usage st (result : _ Types.result_with_meta) =
   match result.usage with
   | Some u ->
@@ -193,6 +312,8 @@ let with_captured_tools f =
 let handle_message st net clock ~agent_mode text =
   let (outcome, tools) =
     with_captured_tools (fun () ->
+      Effects.run_with_effects
+        ~permission_policy:(web_permission_policy ()) @@ fun () ->
       if agent_mode then
         match Agent.run net clock st.session text with
         | Ok (sess', result) ->
@@ -221,6 +342,44 @@ let handle_message st net clock ~agent_mode text =
       ("tools", `List (List.map (fun t -> `String t) tools));
     ]
 
+(** Current values of the editable keys, plus per-provider API-key
+    presence. Key VALUES are never serialized — only set/unset. *)
+let config_snapshot () =
+  let value_of key =
+    match Config.get_string key with
+    | Some v -> `String v
+    | None ->
+      match Config.get_int key with
+      | Some i -> `String (string_of_int i)
+      | None ->
+        match Config.get_bool key with
+        | Some b -> `String (string_of_bool b)
+        | None -> `Null
+  in
+  let settings =
+    List.map (fun (key, desc, accepts) ->
+      `Assoc [
+        ("key", `String key);
+        ("description", `String desc);
+        ("accepts", `String accepts);
+        ("value", value_of key);
+      ]) Config.editable_keys
+  in
+  let providers =
+    List.filter_map (fun (e : CaravanProviders.Registry.entry) ->
+      if not e.requires_key then None
+      else Some (`Assoc [
+        ("name", `String e.name);
+        ("key_env", `String (Option.value ~default:"" e.key_env));
+        ("key_set", `Bool (CaravanProviders.Registry.api_key_for e <> None));
+      ])) CaravanProviders.Registry.entries
+  in
+  `Assoc [
+    ("path", `String (Config.config_path ()));
+    ("settings", `List settings);
+    ("providers", `List providers);
+  ]
+
 let callback st net clock _conn request body =
   let path = Http.Request.resource request in
   let meth = Http.Request.meth request in
@@ -232,7 +391,61 @@ let callback st net clock _conn request body =
       ("model",      `String st.model);
       ("tokens_in",  `Int st.tokens_in);
       ("tokens_out", `Int st.tokens_out);
+      ("permissions", `String (Config.get_permission_mode ()));
     ])
+  | `GET, "/api/config" -> json_response (config_snapshot ())
+  | `POST, "/api/config" ->
+    let raw = read_body body in
+    (try
+       let json = Yojson.Safe.from_string raw in
+       let open Yojson.Safe.Util in
+       let key = json |> member "key" |> to_string in
+       let value = json |> member "value" |> to_string in
+       (* Only whitelisted keys are editable over HTTP. *)
+       if not (List.exists (fun (k, _, _) -> k = key) Config.editable_keys) then
+         json_response ~status:`Forbidden
+           (`Assoc [("error", `String (key ^ " is not editable here"))])
+       else
+         (match Config.set_value key value with
+          | Ok _ ->
+            Trace.log "info" "web: config %s updated" key;
+            json_response (`Assoc [("ok", `Bool true); ("note", `String
+              "Saved. provider/model/base_url apply when the server restarts.")])
+          | Error e ->
+            json_response ~status:`Internal_server_error
+              (`Assoc [("error", `String e)]))
+     with _ ->
+       json_response ~status:`Bad_request
+         (`Assoc [("error", `String "expected {\"key\":…, \"value\":…}")]))
+  | `POST, "/api/key" ->
+    let raw = read_body body in
+    (try
+       let json = Yojson.Safe.from_string raw in
+       let open Yojson.Safe.Util in
+       let provider = json |> member "provider" |> to_string in
+       let key = json |> member "key" |> to_string in
+       (match CaravanProviders.Registry.find provider with
+        | None ->
+          json_response ~status:`Bad_request
+            (`Assoc [("error", `String ("unknown provider: " ^ provider))])
+        | Some e when not e.requires_key ->
+          json_response ~status:`Bad_request
+            (`Assoc [("error", `String (e.name ^ " is local — no key needed"))])
+        | Some e ->
+          if String.trim key = "" then
+            json_response ~status:`Bad_request
+              (`Assoc [("error", `String "empty key")])
+          else
+            (match Config.set_api_key e.name key with
+             | Ok _ ->
+               Trace.log "info" "web: api key for %s stored" e.name;
+               json_response (`Assoc [("ok", `Bool true)])
+             | Error err ->
+               json_response ~status:`Internal_server_error
+                 (`Assoc [("error", `String err)])))
+     with _ ->
+       json_response ~status:`Bad_request
+         (`Assoc [("error", `String "expected {\"provider\":…, \"key\":…}")]))
   | `POST, ("/api/chat" | "/api/agent") ->
     let agent_mode = path = "/api/agent" in
     let raw = read_body body in

@@ -35,6 +35,18 @@ section). Written for review; delete after merging if unwanted.
 7. **Unknown `--provider` silently fell back to Ollama.** → provider registry
    with a real error listing supported names.
 
+### Bugs found *during* the overhaul (by the new tests / e2e harness)
+- **Auto-summarize fired on every turn when `memory_size = 0`.** The
+  threshold check `length > memory_size` didn't treat 0 as "unlimited", so
+  an unlimited-memory session paid a hidden summarization LLM call after
+  each tool turn (and wiped its own history). Caught by the stale-finish
+  regression test; fixed in `Session.run_turn_step`.
+- **First permission wrapper broke all tools.** `run_with_effects`'s
+  default `on_exec` ("No exec handler registered.") captured the
+  `Exec_tool` effect that tools rely on falling through. Caught by the
+  mock-server end-to-end run; `run_with_effects` now only handles effects
+  whose handlers were explicitly supplied.
+
 ### Security
 8. **No TLS certificate verification anywhere.** All three HTTPS handlers
    (`openai_compatible`, `fetch`, `search`) created a bare
@@ -90,6 +102,9 @@ section). Written for review; delete after merging if unwanted.
     man pages fleshed out.
 
 ### Notes on things deliberately left alone
+- `Openai_compatible.config.timeout` is accepted but not yet enforced
+  (cohttp-eio has no per-request timeout hook here); left in place so the
+  API doesn't churn twice when it lands.
 - `gen_tools.ml` build-time generator: crude but works; documented its
   contract (a tool file must contain `module <Capitalized-filename>`).
 - `redis-sync` stays an optional-feeling hard dep (removing it would break

@@ -212,7 +212,9 @@ let run_turn_step ?max_turns ?on_turn net clock sess (reply : chat_message) =
       if has_summarize then
         let (s, _) = summarise net clock sess_after_tools in
         s
-      else if sess.cfg.auto_summarize && M2.length mem2 > sess.cfg.memory_size then
+      (* memory_size = 0 means unlimited — never auto-summarize then. *)
+      else if sess.cfg.auto_summarize && sess.cfg.memory_size > 0
+              && M2.length mem2 > sess.cfg.memory_size then
         let (s, _) = summarise net clock sess_after_tools in
         s
       else

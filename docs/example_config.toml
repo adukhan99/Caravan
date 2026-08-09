@@ -52,6 +52,24 @@ transcript = true
 # Inject budget-awareness nudges into agent loops (default: true)
 nudge = true
 
+# --- Subagents (optional) ---
+# Declaring [[subagents]] tables gives the model a `delegate` tool.
+# Master switch (default: true when tables exist):
+# enable_subagents = true
+#
+# [providers.local_qwen]
+# base_url    = "http://127.0.0.1:8080/v1"
+# api_key_env = "QWEN_KEY"            # optional
+#
+# [[subagents]]
+# name          = "coder"
+# provider      = "local_qwen"        # a [providers.*] table or a registry name
+# model         = "qwen3:8b"
+# tools         = ["bash", "write_file", "read_file"]
+# system_prompt = "You write minimal, correct code."
+# temperature   = 0.2                 # optional
+# max_tokens    = 2048                # optional
+
 # --- TUI Spinner & Progress indicators ---
 [spinner]
 # Enable/disable spinner/progress indicator during long-running tool execution or thinking (default: true)

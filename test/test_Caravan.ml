@@ -1028,3 +1028,43 @@ let%test_unit "lisp_engine_data_and_errors" =
   (match Lisp.run ~max_steps:50 "(sum (range 0 100000))" with
    | Ok (Value.Int n) -> assert (n = 4999950000)
    | _ -> failwith "native sum should succeed under small fuel")
+
+let%test_unit "config_set_value_roundtrip" =
+  let tmp = "test_config_writer.toml" in
+  if Sys.file_exists tmp then Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  (* typed writes *)
+  (match Config.set_value "max_turns" "25" with
+   | Ok _ -> () | Error e -> failwith e);
+  (match Config.set_value "permissions" "ask" with
+   | Ok _ -> () | Error e -> failwith e);
+  (match Config.set_value "stream" "false" with
+   | Ok _ -> () | Error e -> failwith e);
+  (match Config.set_api_key "groq" "gsk_12345" with
+   | Ok _ -> () | Error e -> failwith e);
+  (* dotted path *)
+  (match Config.set_value "spinner.enabled" "false" with
+   | Ok _ -> () | Error e -> failwith e);
+  (* read back through the normal getters (cache was refreshed) *)
+  assert (Config.get_int "max_turns" = Some 25);
+  assert (Config.get_string "permissions" = Some "ask");
+  assert (Config.get_bool "stream" = Some false);
+  assert (Config.get_api_key ~env_var:"NO_SUCH_ENV_VAR_XX" ~name:"groq" () = Some "gsk_12345");
+  assert (Config.get_spinner_enabled () = false);
+  (* numeric-looking API keys must stay strings *)
+  (match Config.set_api_key "openai" "12345" with
+   | Ok _ -> () | Error e -> failwith e);
+  assert (Config.get_api_key ~env_var:"NO_SUCH_ENV_VAR_XX" ~name:"openai" () = Some "12345");
+  (* file perms are private *)
+  let st = Unix.stat tmp in
+  assert (st.Unix.st_perm land 0o077 = 0);
+  (* empty key is rejected *)
+  (match Config.set_value "" "x" with
+   | Error _ -> () | Ok _ -> failwith "empty key should be rejected");
+  Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" "";
+  Config.reload ();
+  (* editable_keys stay well-formed (UI single source of truth) *)
+  List.iter (fun (k, d, a) ->
+    assert (k <> "" && d <> "" && a <> "")) Config.editable_keys

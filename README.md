@@ -7,6 +7,10 @@ light enough for HPC nodes, containers, and non-root environments.
 
 Built on OCaml 5 algebraic effects and Eio. *"Correct, efficient, beautiful."*
 
+**📖 Documentation: [adukhan99.github.io/Caravan](https://adukhan99.github.io/Caravan/)**
+(built from [`docs/src/`](docs/src/) — browsable as plain markdown too) ·
+[API reference](https://adukhan99.github.io/Caravan/api/)
+
 ```
 ╭─────────────────────────────────╮
 │ ☾ C A R A V A N                 │
@@ -90,7 +94,7 @@ caravan           # start chatting
 git clone https://github.com/adukhan99/Caravan.git && cd Caravan
 opam install . --deps-only --with-test -y
 dune build
-dune test                      # 47 tests, no network required
+dune test                      # full suite, no network required
 dune exec caravan -- init
 ```
 
@@ -257,7 +261,7 @@ error listing the valid ones — never a silent fallback.
 | large ~70B | `groq/llama-3.3-70b-versatile` | open weights, hosted fast |
 | frontier | `anthropic/claude-sonnet-4-5` · `openai/gpt-4o` · `gemini/gemini-2.5-pro` | |
 
-Details and caveats: [docs/providers.md](docs/providers.md).
+Details and caveats: [docs/src/providers.md](docs/src/providers.md).
 
 ---
 
@@ -292,7 +296,7 @@ command   = "npx"
 args      = ["-y", "@modelcontextprotocol/server-filesystem", "/home/you/ws"]
 ```
 
-Full reference: [docs/configuration.md](docs/configuration.md) ·
+Full reference: [docs/src/configuration.md](docs/src/configuration.md) ·
 annotated example: [docs/example_config.toml](docs/example_config.toml).
 
 ### Security posture
@@ -403,7 +407,7 @@ flowchart TB
 
 ```bash
 dune build          # zero warnings expected
-dune test           # 47 tests, all offline (mock providers)
+dune test           # all offline (mock providers)
 dune build @doc     # odoc API docs (needs odoc installed)
 ```
 

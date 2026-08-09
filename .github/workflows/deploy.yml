@@ -25,16 +25,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
         with:
-          node-version: '20'
+          mdbook-version: "0.4.40"
 
-      - name: Install Mermaid CLI
-        run: npm install -g @mermaid-js/mermaid-cli
-
-      - name: Render Mermaid Diagrams
-        run: ./scripts/render_docs.sh
+      - name: Build the book
+        run: mdbook build docs
 
       - name: Setup OCaml
         uses: ocaml/setup-ocaml@v3
@@ -42,31 +39,28 @@ jobs:
           ocaml-compiler: 5.2.0
           apt-packages: libssl-dev libgmp-dev pkg-config
 
-      - name: Install Dependencies
+      - name: Install dependencies (with docs)
         run: |
           opam pin add -n Caravan .
           opam install . --deps-only --with-doc -y
+          opam install odoc -y
 
-      - name: Build Documentation
+      - name: Build API reference (odoc)
         run: opam exec -- dune build @doc
 
-      - name: Prepare Deployment Folder
+      - name: Assemble site
         run: |
-          mkdir -p deploy
-          # Copy markdown docs
-          cp -r docs/* deploy/
-          # Copy README
-          cp README.md deploy/
-          # Copy odoc output
-          mkdir -p deploy/api
+          mkdir -p site
+          cp -r docs/book/* site/
+          mkdir -p site/api
           if [ -d "_build/default/_doc/_html" ]; then
-            cp -r _build/default/_doc/_html/* deploy/api/
+            cp -r _build/default/_doc/_html/* site/api/
           fi
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './deploy'
+          path: "./site"
 
       - name: Deploy to GitHub Pages
         id: deployment

@@ -38,3 +38,5 @@ _opam/
 # Generated documentation files
 *.rendered*
 docs/*.rendered*
+# mdBook build output
+docs/book/

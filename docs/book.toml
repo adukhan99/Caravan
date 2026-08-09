@@ -1,0 +1,20 @@
+[book]
+title = "Caravan"
+description = "Typed agentic CLI harness and LLM orchestration framework for OCaml"
+authors = ["Caravan Contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "ayu"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/adukhan99/Caravan"
+edit-url-template = "https://github.com/adukhan99/Caravan/edit/main/docs/src/{path}"
+additional-js = ["theme/mermaid-init.js"]
+
+[output.html.fold]
+enable = true
+level = 1

@@ -251,10 +251,11 @@ let callback st net clock _conn request body =
   | _ ->
     Cohttp_eio.Server.respond_string ~status:`Not_found ~body:"not found" ()
 
-let serve ~port ~session ~provider_name ~model =
+let serve ~port ~provider_name ~model ~make_session =
   Eio_main.run @@ fun env ->
   Effects.with_net env#net @@ fun () ->
   Eio.Switch.run @@ fun sw ->
+  let session = make_session env in
   let st = { session; tokens_in = 0; tokens_out = 0; provider_name; model } in
   let socket =
     Eio.Net.listen ~sw ~backlog:16 ~reuse_addr:true env#net

@@ -84,9 +84,12 @@ let effective_model ~provider_name = function
      | Some m -> m
      | None -> Registry.default_model provider_name)
 
-let make_session ~provider_name ~model ~base_url ~system =
+(** Build a session inside [Eio_main.run]: static + MCP tools, plus the
+    config-declared delegate tool when subagents are enabled. *)
+let make_session ~net ~clock ~provider_name ~model ~base_url ~system =
   let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-  let sess = Session.create ~tools:(all_tools ()) model provider in
+  let tools = Subagents.session_tools ~net ~clock (all_tools ()) in
+  let sess = Session.create ~tools model provider in
   match system with Some s -> Session.set_system sess s | None -> sess
 
 (* ── REPL state ───────────────────────────────────────────────────────── *)
@@ -124,6 +127,7 @@ let help_groups = [
        Some "Example: /provider anthropic");
       ("/models", "Browse available models", None);
       ("/providers", "List supported providers and key status", None);
+      ("/subagents", "Show configured subagent workers", None);
     ] };
   { title = "Safety and Tuning";
     commands = [
@@ -416,6 +420,41 @@ let handle_slash_command net clock st line =
   | ["/providers"] ->
     print_providers_table st.provider_name
 
+  | ["/subagents"] ->
+    let roster = Subagents.describe () in
+    if roster = [] then begin
+      println_ansi (dim "  No subagents configured.");
+      println_ansi (dim "  Declare [[subagents]] tables in the config to enable the delegate tool —");
+      println_ansi (dim "  see docs/configuration.md and examples/heterogeneous_agent_swarms/.")
+    end else begin
+      println_ansi (rule ~title:"Subagents" ());
+      let installed =
+        List.exists (fun t -> Tool.name_of_packed t = "delegate") (Session.tools st.session)
+      in
+      List.iter (fun ((cfg : Config.subagent_config), provider_status) ->
+        let health =
+          if String.length provider_status >= 10
+             && (String.sub provider_status 0 10 = "UNRESOLVED") then red "✗"
+          else if Re.execp (Re.compile (Re.str "unset")) provider_status then yellow "⚠"
+          else green "●"
+        in
+        println_ansi (Printf.sprintf "  %s %s %s %s"
+          health
+          (bold (Printf.sprintf "%-14s" cfg.name))
+          (Printf.sprintf "%-28s" (white (truncate_visible cfg.model 28)))
+          (dim provider_status));
+        if cfg.tool_names <> [] then
+          println_ansi (dim (Printf.sprintf "      tools: %s" (String.concat ", " cfg.tool_names)))
+      ) roster;
+      print_newline ();
+      if not (Subagents.enabled ()) then
+        println_ansi (yellow "  Disabled by enable_subagents = false — /config set enable_subagents true")
+      else if installed then
+        println_ansi (dim "  delegate tool is live in this session (governed by /permissions).")
+      else
+        println_ansi (yellow "  Configured but not loaded in this session — check warnings above/at startup.")
+    end
+
   | ["/tools"] ->
     let tools = Session.tools st.session in
     if tools = [] then println_ansi (yellow "  No tools registered.")
@@ -638,8 +677,8 @@ let run_repl model provider_name base_url system =
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
     let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-    let sess = Session.create ~tools:(all_tools ()) model provider in
-    let sess = match system with Some s -> Session.set_system sess s | None -> sess in
+    let sess = make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system in
     let st = {
       session          = sess;
       provider_name;
@@ -680,7 +719,8 @@ let run_agent model provider_name base_url system max_turns quiet json_out task 
   let exit_code = ref 0 in
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
-    let sess = make_session ~provider_name ~model ~base_url ~system in
+    let sess = make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system in
     let config =
       let base = Agent.default_config () in
       { base with Agent.max_turns = Option.value ~default:base.Agent.max_turns max_turns }
@@ -789,7 +829,8 @@ let run_complete model provider_name base_url system prompt_text =
   let model = effective_model ~provider_name model in
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
-    let sess = make_session ~provider_name ~model ~base_url ~system in
+    let sess = make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system in
     (try
       let stream_enabled = Config.get_stream () in
       let (_sess, result) =
@@ -1082,6 +1123,23 @@ let run_doctor () =
      with _ -> warn "Cannot create transcript directory %s" dir)
   end;
 
+  (* Subagents *)
+  let roster = Subagents.describe () in
+  if roster <> [] then begin
+    if not (Subagents.enabled ()) then
+      warn "%d subagent(s) configured but enable_subagents = false" (List.length roster);
+    List.iter (fun ((cfg : Config.subagent_config), status) ->
+      if String.length status >= 10 && String.sub status 0 10 = "UNRESOLVED" then begin
+        fail ();
+        bad "Subagent '%s': provider '%s' unresolved (no [providers.%s] table, not in registry)"
+          cfg.name cfg.provider_ref cfg.provider_ref
+      end else if Re.execp (Re.compile (Re.str "unset")) status then
+        warn "Subagent '%s': %s" cfg.name status
+      else
+        ok "Subagent '%s' → %s via %s" cfg.name cfg.model status
+    ) roster
+  end;
+
   (* MCP servers *)
   let mcp_servers = Config.get_mcp_servers () in
   List.iter (fun (srv : Config.mcp_server_config) ->
@@ -1158,10 +1216,10 @@ let run_web model provider_name base_url system port =
   init_mcp ();
   let _transcript = setup_frontend ~quiet:true () in
   let model = effective_model ~provider_name model in
-  let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-  let sess = Session.create ~tools:(all_tools ()) model provider in
-  let sess = match system with Some s -> Session.set_system sess s | None -> sess in
-  Web.serve ~port ~session:sess ~provider_name ~model
+  Web.serve ~port ~provider_name ~model
+    ~make_session:(fun env ->
+      make_session ~net:env#net ~clock:env#clock
+        ~provider_name ~model ~base_url ~system)
 
 let web_cmd =
   let port_arg =

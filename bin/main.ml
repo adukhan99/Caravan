@@ -116,6 +116,8 @@ let help_groups = [
       ("/agent <task>", "Let the AI work autonomously on a task",
        Some "Example: /agent summarize the files in this directory");
       ("/nudge <text>", "Queue a steering note for the next model call", None);
+      ("/lisp <program>", "Evaluate a Slip expression (the model's calculator)",
+       Some "Example: /lisp (mean (list 4 8 15 16 23 42))");
       ("/system [text]", "Set instructions for the AI's personality", None);
       ("/clear", "Start a fresh conversation", None);
     ] };
@@ -291,6 +293,14 @@ let handle_slash_command net clock st line =
       with exn ->
         println_ansi (red (Printf.sprintf "  ✗ %s" (Caravan_error.humanize exn))))
     end
+
+  | "/lisp" :: rest ->
+    let src = String.concat " " rest |> String.trim in
+    if src = "" then usage "/lisp" "<program>   e.g. /lisp (sum (range 1 101))"
+    else
+      (match Caravan.Lisp.run_to_string src with
+       | Ok out -> println_ansi (green ("  " ^ out))
+       | Error e -> println_ansi (red ("  ✗ " ^ e)))
 
   | "/nudge" :: rest ->
     let text = String.concat " " rest |> String.trim in

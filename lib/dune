@@ -27,6 +27,7 @@
   Formatter
   Memory
   Parser
+  Lisp
   Trace
   Tls
   Ui

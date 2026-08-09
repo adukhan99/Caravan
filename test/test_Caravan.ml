@@ -951,3 +951,80 @@ let%test_unit "effects_exec_tool_not_swallowed_by_permission_wrapper" =
       Tool.dispatch tool "{}")
   in
   assert (Re.execp (Re.compile (Re.str "Permission denied")) denied)
+
+let%test_unit "lisp_engine_core" =
+  let ok src expected =
+    match Lisp.run_to_string src with
+    | Ok got when got = expected -> ()
+    | Ok got -> failwith (Printf.sprintf "lisp %s => %s (wanted %s)" src got expected)
+    | Error e -> failwith (Printf.sprintf "lisp %s failed: %s" src e)
+  in
+  (* arithmetic & numeric tower *)
+  ok "(+ 1 2 3)" "6";
+  ok "(* 2 3.5)" "7";
+  ok "(- 10 4 1)" "5";
+  ok "(- 3)" "-3";
+  ok "(mod 17 5)" "2";
+  ok "(min (list 3 1 2))" "1";
+  ok "(max 3 1 2)" "3";
+  ok "(sum (range 1 101))" "5050";
+  ok "(round (mean (list 1 2 3 4)))" "3";  (* 2.5 rounds-half-up-to-even → 2? Float.round 2.5 = 3. *)
+  (* comparison, logic, control *)
+  ok "(if (> 3 2) \"yes\" \"no\")" "yes";
+  ok "(and true (< 1 2))" "true";
+  ok "(or false null 7)" "7";
+  ok "(not 0)" "true";
+  (* let, define, lambda, recursion *)
+  ok "(let ((x 2) (y (* x 3))) (+ x y))" "8";
+  ok "(define sq (lambda (x) (* x x))) (sq 9)" "81";
+  ok "(define fact (lambda (n) (if (<= n 1) 1 (* n (fact (- n 1)))))) (fact 6)" "720";
+  (* higher-order with builtin passed by name *)
+  ok "(map upper (list \"a\" \"b\"))" "(A B)";
+  ok "(filter (lambda (x) (> x 2)) (list 1 2 3 4))" "(3 4)";
+  ok "(reduce + 0 (list 1 2 3 4))" "10";
+  (* strings *)
+  ok "(join (split \"a,b,c\" \",\") \"-\")" "a-b-c";
+  ok "(str \"n=\" (len (list 1 2 3)))" "n=3";
+  (* homoiconicity: quote / show / read / eval *)
+  ok "'(+ 1 2)" "(+ 1 2)";
+  ok "(show '(+ 1 2))" "(+ 1 2)";
+  ok "(eval '(+ 1 2))" "3";
+  ok "(eval (read \"(* 6 7)\"))" "42";
+  (* comments *)
+  ok "; a comment\n(+ 1 1) ; trailing" "2"
+
+let%test_unit "lisp_engine_data_and_errors" =
+  let data = Value.of_string_permissive
+      {|[{"name":"Ada","age":36,"role":"admin"},
+         {"name":"Bob","age":25,"role":"user"},
+         {"name":"Cy","age":31,"role":"user"}]|} in
+  let ok src expected =
+    match Lisp.run_to_string ~data src with
+    | Ok got when got = expected -> ()
+    | Ok got -> failwith (Printf.sprintf "lisp %s => %s (wanted %s)" src got expected)
+    | Error e -> failwith (Printf.sprintf "lisp %s failed: %s" src e)
+  in
+  ok "(len data)" "3";
+  ok "(get \"name\" (first (where \"role\" \"admin\" data)))" "Ada";
+  ok "(len (filter (lambda (r) (> (get \"age\" r) 30)) data))" "2";
+  ok "(get \"name\" (first (sort-by \"age\" data)))" "Bob";
+  ok "(join (map (lambda (r) (get \"name\" r)) data) \", \")" "Ada, Bob, Cy";
+  (* errors are values, not crashes *)
+  let err src needle =
+    match Lisp.run src with
+    | Error e when Re.execp (Re.compile (Re.str needle)) e -> ()
+    | Error e -> failwith (Printf.sprintf "lisp %s: wrong error %s" src e)
+    | Ok _ -> failwith (Printf.sprintf "lisp %s: expected an error" src)
+  in
+  err "(/ 1 0)" "division by zero";
+  err "(frobnicate 1)" "unbound symbol";
+  err "(define loop (lambda (x) (loop x))) (loop 1)" "step budget";
+  err "(+ 1" "missing ')'";
+  (* fuel is configurable; lambda applications burn steps *)
+  (match Lisp.run ~max_steps:50 "(map (lambda (x) (* x x)) (range 0 1000))" with
+   | Error e -> assert (Re.execp (Re.compile (Re.str "step budget")) e)
+   | Ok _ -> failwith "expected tiny fuel to run out");
+  (* while native data ops are one step — big folds stay cheap *)
+  (match Lisp.run ~max_steps:50 "(sum (range 0 100000))" with
+   | Ok (Value.Int n) -> assert (n = 4999950000)
+   | _ -> failwith "native sum should succeed under small fuel")

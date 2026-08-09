@@ -1,5 +1,6 @@
 (library
  (name CaravanTools)
+ (public_name Caravan.tools)
  (libraries Caravan unix yojson re cohttp-eio eio eio_main uri ssl eio-ssl)
  (modules (:standard \ gen_tools)))
 

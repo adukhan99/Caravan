@@ -1,0 +1,31 @@
+{0 Caravan API Reference}
+
+Caravan is a typed, self-documenting agentic CLI harness and LLM orchestration framework for OCaml.
+
+{1 Package Libraries}
+
+Caravan is partitioned into three focused libraries:
+
+- {!module-Caravan}: Core orchestration framework, agents, chains, sessions, trace, memory, types, and LISP engine.
+- {!module-CaravanProviders}: Pluggable LLM providers (Ollama, OpenAI, Llama.cpp, and OpenAI-compatible backends).
+- {!module-CaravanTools}: Built-in execution tools (Bash, File I/O, Web Search/Fetch, Delegate, Finish, Lisp).
+
+{1 Core Modules}
+
+- {!module-Caravan.Agent}: Autonomous ReAct agent loops with turn budgets and budget-awareness nudges.
+- {!module-Caravan.Chain}: Composable typed LLM pipelines with monadic Result-binding ([|>>]), parallel execution, and retries.
+- {!module-Caravan.Session}: Multi-turn session state, system prompts, turn tracking, and history management.
+- {!module-Caravan.Memory}: Context window management and compaction strategies (Ring buffer, Summary, Hierarchical).
+- {!module-Caravan.Trace}: Structured event streaming and audit logging (JSONL sink).
+- {!module-Caravan.Types}: Core message types ([chat_message], [role], [result_with_meta], [usage_stats]).
+- {!module-Caravan.Provider}: Abstract LLM backend interface and packed existential provider wrapper.
+- {!module-Caravan.Tool}: First-class module tool interface ([TOOL]) and effect execution.
+- {!module-Caravan.Subagent}: Isolation and delegation of sub-tasks to dedicated worker subagents.
+- {!module-Caravan.Permission}: Security permission policies ([auto], [ask], [readonly]) and mutating tool guards.
+- {!module-Caravan.Lisp}: Embedded Slip micro-LISP interpreter for programmatic tool composition.
+- {!module-Caravan.Mcp}: Model Context Protocol (MCP) server integration and client registry.
+- {!module-Caravan.Prompt}: Composable conversation building via a Writer monad.
+- {!module-Caravan.Template}: Variable substitution and chat template rendering engine.
+- {!module-Caravan.Parser}: Type-safe output parsers for model responses.
+- {!module-Caravan.Tls}: Verified TLS connection setup with system CA store integration.
+- {!module-Caravan.Ui}: Terminal rendering, spinners, and interactive TUI components.

@@ -1,5 +1,6 @@
 (library
  (name CaravanProviders)
+ (public_name Caravan.providers)
  (libraries
   Caravan
   eio

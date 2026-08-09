@@ -1,5 +1,6 @@
 (library
  (name Caravan)
+ (public_name Caravan)
  (libraries
   unix
   eio
@@ -43,3 +44,6 @@
   Mcp
   Value
   Redis_store))
+
+(documentation
+ (package Caravan))

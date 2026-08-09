@@ -19,3 +19,4 @@
 - [Library Guide](library.md)
 - [Architecture](architecture.md)
 - [Development](development.md)
+- [API Reference](api.md)

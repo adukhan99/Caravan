@@ -222,19 +222,34 @@ let print_banner () =
     (* Caravan wordmark: desert-dusk gradient when the terminal allows. *)
     let word = "☾ C A R A V A N" in
     let sub  = "typed agentic harness · OCaml" in
+    (* Split into UTF-8 codepoints so multi-byte glyphs stay intact. *)
+    let utf8_chunks s =
+      let len = String.length s in
+      let rec go i acc =
+        if i >= len then List.rev acc
+        else
+          let c = Char.code s.[i] in
+          let step = if c < 0x80 then 1 else if c < 0xE0 then 2
+                     else if c < 0xF0 then 3 else 4 in
+          let step = min step (len - i) in
+          go (i + step) (String.sub s i step :: acc)
+      in
+      go 0 []
+    in
     let colored_word =
       match Lazy.force color_depth with
       | `True_color | `Color_256 ->
         (* amber → rose gradient across the letters *)
-        let n = String.length word in
-        String.to_seq word
-        |> Seq.mapi (fun i c ->
+        let chunks = utf8_chunks word in
+        let n = List.length chunks in
+        List.mapi (fun i ch ->
             let t = float_of_int i /. float_of_int (max 1 (n - 1)) in
             let r = 236 + int_of_float (t *. 8.) in
             let g = 150 - int_of_float (t *. 60.) in
             let b = 60  + int_of_float (t *. 90.) in
-            rgb (r, g, b) (String.make 1 c))
-        |> List.of_seq |> String.concat ""
+            rgb (r, g, b) ch)
+          chunks
+        |> String.concat ""
       | _ -> bold (yellow word)
     in
     println_ansi (panel [bold colored_word; dim sub]);

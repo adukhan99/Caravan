@@ -138,6 +138,9 @@ let help_groups = [
       ("/export [file]", "Save conversation to a file", None);
       ("/tools", "List available tools for the agent", None);
       ("/config", "Show current settings", None);
+      ("/config set <k> <v>", "Change a setting, saved to the config file",
+       Some "Example: /config set permissions ask   (/config keys lists them)");
+      ("/key <provider>", "Store an API key (input hidden, file 0600)", None);
     ] };
   { title = "Exit";
     commands = [
@@ -157,6 +160,31 @@ let print_help_grouped groups =
     ) g.commands
   ) groups;
   print_newline ()
+
+(* ── Interactive input helpers (shared by wizard and slash commands) ──── *)
+
+let read_line_default default =
+  match String.trim (try input_line stdin with End_of_file -> "") with
+  | "" -> default
+  | s -> s
+
+(** Read a secret without echoing it to the terminal. *)
+let read_secret prompt =
+  print_ansi (cyan prompt);
+  flush stdout;
+  let read_plain () = try String.trim (input_line stdin) with End_of_file -> "" in
+  if not is_tty then read_plain ()
+  else begin
+    let open Unix in
+    try
+      let attr = tcgetattr stdin in
+      tcsetattr stdin TCSANOW { attr with c_echo = false };
+      let s = Fun.protect
+          ~finally:(fun () -> tcsetattr stdin TCSANOW attr; print_newline ())
+          read_plain
+      in s
+    with Unix_error _ -> read_plain ()
+  end
 
 (* ── Slash command helpers ────────────────────────────────────────────── *)
 
@@ -402,6 +430,56 @@ let handle_slash_command net clock st line =
       ) tools;
       println_ansi (dim "\n  ✎ = can modify state (governed by /permissions)")
     end
+
+  | "/config" :: "set" :: key :: rest when rest <> [] ->
+    let value = String.concat " " rest in
+    (match Config.set_value key value with
+     | Ok path ->
+       confirm "%s = %s  (saved to %s)" key value path;
+       (match key with
+        | "provider" | "model" | "base_url" ->
+          println_ansi (dim "  Applies to new sessions — use /provider or /model to switch live.")
+        | "permissions" ->
+          permission_mode := Config.get_permission_mode ()
+        | _ -> ())
+     | Error e -> println_ansi (red (Printf.sprintf "  ✗ %s" e)))
+
+  | ["/config"; "get"; key] ->
+    (match Config.get_string key with
+     | Some v -> println_ansi (kv_line key (white v))
+     | None ->
+       match Config.get_int key with
+       | Some v -> println_ansi (kv_line key (white (string_of_int v)))
+       | None ->
+         match Config.get_bool key with
+         | Some b -> println_ansi (kv_line key (white (string_of_bool b)))
+         | None -> println_ansi (yellow (Printf.sprintf "  '%s' is not set" key)))
+
+  | ["/config"; "keys"] ->
+    println_ansi (rule ~title:"Editable keys" ());
+    List.iter (fun (k, desc, accepts) ->
+      println_ansi (Printf.sprintf "  %s %s %s"
+        (cyan (Printf.sprintf "%-17s" k))
+        (Printf.sprintf "%-42s" (dim desc))
+        (dim accepts))
+    ) Config.editable_keys;
+    println_ansi (dim "\n  /config set <key> <value>   ·   /key <provider> to store an API key")
+
+  | "/key" :: rest ->
+    (match rest with
+     | [name] ->
+       (match Registry.find name with
+        | None -> println_ansi (red (Registry.unknown_provider_message name))
+        | Some e when not e.requires_key ->
+          println_ansi (yellow (Printf.sprintf "  %s is a local provider — no API key needed." e.name))
+        | Some e ->
+          let key = read_secret (Printf.sprintf "  Paste the %s API key (input hidden): " e.name) in
+          if key = "" then println_ansi (yellow "  Nothing entered — key unchanged.")
+          else
+            (match Config.set_api_key e.name key with
+             | Ok path -> confirm "API key for %s stored in %s (0600)" e.name path
+             | Error err -> println_ansi (red (Printf.sprintf "  ✗ %s" err))))
+     | _ -> usage "/key" "<provider>   (stores the key under [api_keys], input hidden)")
 
   | ["/config"] ->
     let cfg = Session.config st.session in
@@ -807,29 +885,6 @@ let providers_cmd =
 
 (* ── init command (setup wizard) ──────────────────────────────────────── *)
 
-let read_line_default default =
-  match String.trim (try input_line stdin with End_of_file -> "") with
-  | "" -> default
-  | s -> s
-
-(** Read a secret without echoing it to the terminal. *)
-let read_secret prompt =
-  print_ansi (cyan prompt);
-  flush stdout;
-  let read_plain () = try String.trim (input_line stdin) with End_of_file -> "" in
-  if not is_tty then read_plain ()
-  else begin
-    let open Unix in
-    try
-      let attr = tcgetattr stdin in
-      tcsetattr stdin TCSANOW { attr with c_echo = false };
-      let s = Fun.protect
-          ~finally:(fun () -> tcsetattr stdin TCSANOW attr; print_newline ())
-          read_plain
-      in s
-    with Unix_error _ -> read_plain ()
-  end
-
 let toml_escape s =
   let buf = Buffer.create (String.length s) in
   String.iter (function
@@ -1050,18 +1105,6 @@ let doctor_cmd =
 
 (* ── config command ───────────────────────────────────────────────────── *)
 
-let toml_value_of_string s =
-  match int_of_string_opt s with
-  | Some i -> Otoml.integer i
-  | None ->
-    match float_of_string_opt s with
-    | Some f -> Otoml.float f
-    | None ->
-      match String.lowercase_ascii s with
-      | "true" -> Otoml.boolean true
-      | "false" -> Otoml.boolean false
-      | _ -> Otoml.string s
-
 let run_config args =
   let path = Config.config_path () in
   match args with
@@ -1086,21 +1129,15 @@ let run_config args =
          | Some b -> print_endline (string_of_bool b)
          | None -> Printf.eprintf "Key '%s' not set.\n%!" key; exit 1)
   | ["set"; key; value] ->
-    let ast =
-      if Sys.file_exists path then
-        (try Otoml.Parser.from_file path with _ -> Otoml.TomlTable [])
-      else Otoml.TomlTable []
-    in
-    let keys = String.split_on_char '.' key in
-    let ast' = Otoml.update ast keys (Some (toml_value_of_string value)) in
-    let dir = Filename.dirname path in
-    if not (Sys.file_exists dir) then (try Unix.mkdir dir 0o700 with _ -> ());
-    let oc = open_out_gen [Open_creat; Open_trunc; Open_wronly] 0o600 path in
-    output_string oc (Otoml.Printer.to_string ast');
-    close_out oc;
-    println_ansi (green (Printf.sprintf "✓ %s = %s" key value))
+    (match Config.set_value key value with
+     | Ok _ -> println_ansi (green (Printf.sprintf "✓ %s = %s" key value))
+     | Error e -> Printf.eprintf "Error: %s\n%!" e; exit 1)
+  | ["keys"] ->
+    List.iter (fun (k, desc, accepts) ->
+      Printf.printf "%-18s %-44s %s\n" k desc accepts
+    ) Config.editable_keys
   | _ ->
-    Printf.eprintf "Usage: caravan config [show|path|get KEY|set KEY VALUE]\n%!";
+    Printf.eprintf "Usage: caravan config [show|path|keys|get KEY|set KEY VALUE]\n%!";
     exit 2
 
 let config_cmd =

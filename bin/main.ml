@@ -574,6 +574,21 @@ let handle_slash_command net clock st line =
       confirm "Stop sequences → %s" (String.concat ", " rest)
     end
 
+  (* Pre-run commands, reachable from inside the REPL too — one command
+     surface instead of two. They run as subprocesses so their own event
+     loops don't nest inside ours. *)
+  | ["/doctor"] ->
+    ignore (Sys.command (Filename.quote Sys.executable_name ^ " doctor"))
+
+  | ["/init"] ->
+    ignore (Sys.command (Filename.quote Sys.executable_name ^ " init"));
+    Config.reload ();
+    println_ansi (dim "  Config reloaded — /provider or /model to apply changes live.")
+
+  | ["/web"] ->
+    println_ansi (yellow "  The web UI blocks a terminal, so run it in another one:");
+    println_ansi (cyan "    caravan web    ")
+
   | cmd :: _ ->
     if String.length cmd > 0 && cmd.[0] = '/' then
       println_ansi (red (Printf.sprintf "  Unknown command: %s  (try /help)" cmd))
@@ -581,8 +596,42 @@ let handle_slash_command net clock st line =
 
 (* ── REPL loop ────────────────────────────────────────────────────────── *)
 
+(** Every REPL command, for the live completion palette (and /help). *)
+let palette : Editor.command_info list =
+  let c name args doc = Editor.{ name; args; doc } in
+  [ c "/agent" "<task>" "run the agent autonomously on a task";
+    c "/nudge" "<text>" "queue a steering note for the next model call";
+    c "/lisp" "<program>" "evaluate a Slip expression, e.g. (sum (range 1 11))";
+    c "/system" "[text]" "set (or clear) the system prompt";
+    c "/clear" "" "start a fresh conversation";
+    c "/model" "<name>" "switch model";
+    c "/models" "" "browse models on this provider";
+    c "/provider" "<name> [url]" "switch provider";
+    c "/providers" "" "provider table with key status";
+    c "/subagents" "" "configured subagent workers";
+    c "/permissions" "[mode]" "tool policy: auto | ask | readonly";
+    c "/temp" "<0.0-2.0>" "sampling temperature";
+    c "/top_p" "<0.0-1.0>" "nucleus sampling";
+    c "/top_k" "<n>" "top-k sampling";
+    c "/max_tokens" "<n>" "response token cap";
+    c "/seed" "<n>" "sampling seed";
+    c "/stop" "[seq …]" "stop sequences (empty clears)";
+    c "/memory" "<n>" "context window in messages (0 = unlimited)";
+    c "/summarise" "" "compact the conversation now";
+    c "/history" "" "show the conversation so far";
+    c "/export" "[file]" "save the conversation as JSON";
+    c "/tools" "" "available tools (✎ = mutating)";
+    c "/config" "[set k v | get k | keys]" "show or edit settings";
+    c "/key" "<provider>" "store an API key (hidden input)";
+    c "/doctor" "" "run diagnostics";
+    c "/init" "" "re-run the setup wizard";
+    c "/web" "" "how to launch the web UI";
+    c "/help" "" "all commands, grouped";
+    c "/quit" "" "exit Caravan";
+  ]
+
 let repl net clock st =
-  let prompt () =
+  let status_line () =
     if is_tty then begin
       let turns = List.length (Session.history st.session) in
       let status = render_status_bar
@@ -592,17 +641,14 @@ let repl net clock st =
         ~tokens_in:st.total_tokens_in
         ~tokens_out:st.total_tokens_out
       in
-      println_ansi (Printf.sprintf "\n%s" status);
-      print_ansi (Printf.sprintf "%s " (bold (cyan "❯")))
+      println_ansi (Printf.sprintf "\n%s" status)
     end;
     flush stdout
   in
+  let prompt_str = Printf.sprintf "%s " (bold (cyan "❯")) in
   let rec loop () =
-    prompt ();
-    let line_opt =
-      try Some (input_line stdin)
-      with End_of_file -> None
-    in
+    status_line ();
+    let line_opt = Editor.read_line ~prompt:prompt_str ~commands:palette () in
     let line = match line_opt with
       | Some l -> String.trim l
       | None -> "/quit"

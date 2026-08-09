@@ -7,6 +7,8 @@
   CaravanTools
   eio
   eio_main
+  cohttp-eio
+  otoml
   cmdliner
   re
   fmt

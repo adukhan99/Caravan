@@ -30,7 +30,8 @@ let humanize exn =
     "Could not connect to the AI provider.\n" ^
     "  Hint: Is Ollama running? Try: ollama serve\n" ^
     "  Hint: Using OpenAI? Check your API key and internet connection."
-  else if contains raw "404" || contains raw "model" then
+  else if contains raw "404"
+       || (contains raw "model" && (contains raw "not found" || contains raw "does not exist")) then
     "Model not found on this provider.\n" ^
     "  Hint: Run /models to see what's available, or /model <name> to switch."
   else if contains raw "401" || contains raw "Unauthorized" then

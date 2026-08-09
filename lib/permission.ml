@@ -44,3 +44,25 @@ let check mode tool_name args =
   | Custom policy -> policy tool_name args
 
 let default_policy () = Always_allow
+
+(** Tools that can change state outside the conversation. Everything else
+    (reads, searches, pure computations) is always allowed. *)
+let mutating_tools =
+  ["bash"; "write_file"; "sed"; "touch"; "mkdir"; "delegate"]
+
+let is_mutating tool_name = List.mem tool_name mutating_tools
+
+(** Map a config-level mode string to a policy usable as
+    [Effects.run_with_effects ~permission_policy].
+    - "auto"      : allow everything (default);
+    - "ask"       : prompt on mutating tools, allow the rest;
+    - "readonly"  : deny mutating tools outright. *)
+let policy_of_mode mode : string -> string -> bool =
+  match String.lowercase_ascii mode with
+  | "ask" ->
+    (fun name args ->
+       if not (is_mutating name) then true
+       else check Ask_user name args)
+  | "readonly" | "read-only" | "ro" ->
+    (fun name _args -> not (is_mutating name))
+  | _ -> (fun _ _ -> true)

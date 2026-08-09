@@ -33,7 +33,6 @@ module Fetch : TOOL = struct
     | Ok content -> content
 
   type _ Effect.t += Exec : input -> output Effect.t
-  type _ Effect.t += Get_net : _ Eio.Net.t Effect.t
 
   let strip_html s =
     let len = String.length s in
@@ -71,16 +70,7 @@ module Fetch : TOOL = struct
 
   let do_fetch net { url } =
     let uri = Uri.of_string url in
-    let https uri sock =
-      let host = Uri.host uri |> Option.value ~default:"" in
-      let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
-      let ctx = Eio_ssl.Context.create ~ctx:ssl_ctx (Obj.magic sock : Eio_unix.Net.stream_socket_ty Eio.Resource.t) in
-      let ssl_sock_raw = Eio_ssl.Context.ssl_socket ctx in
-      Ssl.set_client_SNI_hostname ssl_sock_raw host;
-      let ssl_sock = Eio_ssl.connect ctx in
-      (ssl_sock :> _ Eio.Flow.two_way)
-    in
-    let client = Cohttp_eio.Client.make ~https:(Some https) net in
+    let client = Caravan.Tls.make_client net uri in
     let headers = Http.Header.of_list [
       ("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
       ("User-Agent", "Caravan WebFetch/1.0");
@@ -105,9 +95,11 @@ module Fetch : TOOL = struct
       Error (Printf.sprintf "Exception during fetch: %s" msg)
 
   let execute input =
-    match Effect.perform Get_net with
+    match Caravan.Effects.get_net () with
     | net -> do_fetch net input
     | exception Effect.Unhandled _ ->
+      (* No ambient net capability (library use outside a front-end):
+         boot a temporary event loop in a fresh domain as a last resort. *)
       Domain.join (Domain.spawn (fun () ->
         Eio_main.run (fun env ->
           do_fetch env#net input

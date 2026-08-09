@@ -30,15 +30,19 @@ Start here before moving on to the swarm examples.
 
 Edit `config.toml` and change the three core fields:
 
-| Provider   | `provider`  | `model`        | `base_url`                                           |
-|------------|-------------|----------------|------------------------------------------------------|
-| OpenAI     | `"openai"`  | `"gpt-4o-mini"`| *(default — omit `base_url`)*                        |
-| Ollama     | `"ollama"`  | `"llama3.2"`   | `"http://127.0.0.1:11434/v1"`                        |
-| llama.cpp  | `"llama_cpp"`| `"default"`   | `"http://127.0.0.1:8080/v1"`                         |
-| Gemini     | `"openai"`  | `"gemini-2.0-flash"` | `"https://generativelanguage.googleapis.com/v1beta/openai"` |
+| Provider   | `provider`   | `model`               | key env var         |
+|------------|--------------|-----------------------|---------------------|
+| Ollama     | `"ollama"`   | `"llama3.2"`          | — (local)           |
+| llama.cpp  | `"llama_cpp"`| `"default"`           | — (local)           |
+| OpenAI     | `"openai"`   | `"gpt-4o-mini"`       | `OPENAI_API_KEY`    |
+| Anthropic  | `"anthropic"`| `"claude-sonnet-4-5"` | `ANTHROPIC_API_KEY` |
+| Gemini     | `"gemini"`   | `"gemini-2.0-flash"`  | `GEMINI_API_KEY`    |
+| Groq       | `"groq"`     | `"llama-3.3-70b-versatile"` | `GROQ_API_KEY` |
 
-> **Note:** Gemini uses the `"openai"` provider type because it exposes an
-> OpenAI-compatible endpoint. Set `OPENAI_API_KEY` to your Gemini API key.
+Run `caravan providers` for the full list (13 backends) with live key
+status, and `caravan providers --ladder` for a curated model per weight
+class. Base URLs default sensibly per provider — only set `base_url` for
+custom endpoints.
 
 ## Config Keys Reference
 

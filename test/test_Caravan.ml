@@ -501,7 +501,7 @@ let%expect_test "session_summarise" =
     Format.printf "Content: %s\n" msg.Types.content
   );
   [%expect {|
-    ⠋ Compressing...[KThis is a summary.
+    This is a summary.
     History length: 1
     Role: System
     Content: [Conversation summary]: This is a summary.
@@ -720,7 +720,7 @@ let%test_unit "agent_turn_increment_and_max_turns" =
     let sess = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
     
     let on_turn current max = turn_calls := (current, max) :: !turn_calls in
-    let agent_cfg = Agent.{ max_turns = 5; continue_prompt = "continue" } in
+    let agent_cfg = Agent.{ max_turns = 5; continue_prompt = "continue"; nudge = false } in
     let res = Agent.run ~config:agent_cfg ~on_turn env#net env#clock sess "Execute multi-turn task" in
     (match res with
      | Ok (final_sess, _meta) ->
@@ -732,9 +732,222 @@ let%test_unit "agent_turn_increment_and_max_turns" =
     call_count := 0;
     turn_calls := [];
     let sess2 = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
-    let agent_cfg_low = Agent.{ max_turns = 2; continue_prompt = "continue" } in
+    let agent_cfg_low = Agent.{ max_turns = 2; continue_prompt = "continue"; nudge = false } in
     let res_low = Agent.run ~config:agent_cfg_low ~on_turn env#net env#clock sess2 "Task max turns test" in
     (match res_low with
      | Error "Maximum turns reached without completion." -> ()
      | _ -> failwith "Expected max turns error")
   )
+
+(* ── Overhaul regression & feature tests ─────────────────────────────── *)
+
+let%test_unit "ring_window_zero_means_unlimited" =
+  (* Regression: Ring.make ~window:0 used to drop every message. *)
+  let mem = Memory.Ring.make ~window:0 () in
+  let mem =
+    List.fold_left (fun m i ->
+      Memory.Ring.add m (Types.user_msg (Printf.sprintf "msg %d" i))
+    ) mem (List.init 50 Fun.id)
+  in
+  assert (Memory.Ring.length mem = 50);
+  (* Summary memory built on the same normalisation. *)
+  let sm = Memory.Summary.create ~max_messages:0 () in
+  let sm = List.fold_left Memory.Summary.add sm
+      (List.init 10 (fun i -> Types.user_msg (string_of_int i))) in
+  assert (Memory.Summary.length sm = 10)
+
+let%test_unit "wire_json_omits_internal_fields" =
+  let msg = Types.user_msg "hello" in
+  let wire = Types.chat_message_to_wire_json msg in
+  let export = Types.chat_message_to_json msg in
+  let has_field json f =
+    match json with
+    | `Assoc kvs -> List.mem_assoc f kvs
+    | _ -> false
+  in
+  assert (not (has_field wire "timestamp"));
+  assert (has_field export "timestamp");
+  assert (has_field wire "role");
+  assert (has_field wire "content")
+
+let%test_unit "bash_tool_captures_stderr_and_exit_status" =
+  let tool = Tool.Tool (module CaravanTools.Bash.Bash) in
+  let res = Tool.dispatch tool {|{"command": "ls /nonexistent_caravan_test_dir_xyz"}|} in
+  let contains needle = Re.execp (Re.compile (Re.str needle)) res in
+  (* stderr text must be visible to the model... *)
+  assert (contains "nonexistent_caravan_test_dir_xyz");
+  (* ...and the failure must be explicit. *)
+  assert (contains "[exit status")
+
+let%test_unit "permission_policy_modes" =
+  let ro = Permission.policy_of_mode "readonly" in
+  assert (not (ro "bash" "{}"));
+  assert (not (ro "write_file" "{}"));
+  assert (ro "read_file" "{}");
+  assert (ro "web_search" "{}");
+  let auto = Permission.policy_of_mode "auto" in
+  assert (auto "bash" "{}");
+  assert (Permission.is_mutating "sed");
+  assert (not (Permission.is_mutating "grep"))
+
+let%test_unit "registry_lookup_and_errors" =
+  let open CaravanProviders.Registry in
+  (match find "anthropic" with
+   | Some e ->
+     assert (e.default_model = "claude-sonnet-4-5");
+     assert (e.key_env = Some "ANTHROPIC_API_KEY")
+   | None -> failwith "anthropic missing from registry");
+  (* Aliases resolve. *)
+  (match find "claude" with
+   | Some e -> assert (e.name = "anthropic")
+   | None -> failwith "alias 'claude' failed");
+  (match find "GROQ" with
+   | Some e -> assert (e.name = "groq")
+   | None -> failwith "case-insensitive lookup failed");
+  (* Unknown providers raise instead of silently falling back. *)
+  let raised = ref false in
+  (try ignore (make_provider ~model:"m" "definitely_not_a_provider")
+   with Unknown_provider msg ->
+     raised := true;
+     assert (Re.execp (Re.compile (Re.str "ollama")) msg));
+  assert !raised;
+  assert (default_model "openai" = "gpt-4o-mini");
+  (* Every entry is self-consistent. *)
+  List.iter (fun e ->
+    assert (e.name <> "");
+    assert (e.base_url <> "");
+    assert (e.default_model <> "");
+    if e.requires_key then assert (e.key_env <> None)
+  ) entries
+
+let%test_unit "agent_nudge_injection" =
+  let cfg = Agent.{ max_turns = 10; continue_prompt = "continue"; nudge = true } in
+  (* Halfway through the budget the nudge fires... *)
+  let p_half = Agent.continue_prompt_for cfg ~task:"solve it" ~used:5 in
+  assert (Re.execp (Re.compile (Re.str "Caravan nudge")) p_half);
+  assert (Re.execp (Re.compile (Re.str "solve it")) p_half);
+  (* ...near exhaustion it urges finishing... *)
+  let p_end = Agent.continue_prompt_for cfg ~task:"solve it" ~used:9 in
+  assert (Re.execp (Re.compile (Re.str "finish")) p_end);
+  (* ...but not on ordinary turns, and never when disabled. *)
+  let p_quiet = Agent.continue_prompt_for cfg ~task:"solve it" ~used:2 in
+  assert (p_quiet = "continue");
+  let cfg_off = Agent.{ cfg with nudge = false } in
+  assert (Agent.continue_prompt_for cfg_off ~task:"solve it" ~used:5 = "continue")
+
+let%test_unit "agent_completion_not_fooled_by_stale_finish" =
+  (* Regression: a finish call in an earlier task made every later task in
+     the same session appear instantly finished. *)
+  Eio_main.run (fun env ->
+    let call_count = ref 0 in
+    let module P : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "two_tasks"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+        incr call_count;
+        let tc = Types.{ id = Printf.sprintf "fin_%d" !call_count; name = "finish";
+                         args = Printf.sprintf {|{"summary": "task %d done"}|} !call_count;
+                         extra_content = None } in
+        Types.wrap_result ~raw_response:"" ~model:"m" ~provider:"p"
+          (Types.assistant_tool_msg ~tool_calls:[tc] "")
+      let stream _net _cfg ?model:_ ?options:_ ?tools:_ msgs ~on_token:_ =
+        complete _net _cfg msgs
+      let list_models _ _ = []
+    end in
+    let provider = Provider.Provider ((module P), ()) in
+    let finish_tool = Tool.Tool (module CaravanTools.Finish.Finish) in
+    let sess = Session.create ~tools:[finish_tool] "m" provider in
+    let sess = Session.set_memory_size sess 0 in
+    (match Agent.run env#net env#clock sess "task one" with
+     | Ok (sess1, r1) ->
+       assert (Re.execp (Re.compile (Re.str "task 1 done")) r1.value.content);
+       (* Second task on the SAME session must trigger a fresh model call. *)
+       (match Agent.run env#net env#clock sess1 "task two" with
+        | Ok (_, r2) ->
+          assert (!call_count = 2);
+          assert (Re.execp (Re.compile (Re.str "task 2 done")) r2.value.content)
+        | Error e -> failwith ("second task failed: " ^ e))
+     | Error e -> failwith ("first task failed: " ^ e)))
+
+let%test_unit "session_finish_reason_propagates" =
+  Eio_main.run (fun env ->
+    let module Plain : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "plain"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+        Types.wrap_result ~raw_response:"" ~model:"m" ~provider:"p"
+          (Types.assistant_msg "just text")
+      let stream _net _cfg ?model:_ ?options:_ ?tools:_ msgs ~on_token:_ =
+        complete _net _cfg msgs
+      let list_models _ _ = []
+    end in
+    let provider = Provider.Provider ((module Plain), ()) in
+    let sess = Session.create ~tools:[] "m" provider in
+    let (_, result) = Session.turn env#net env#clock sess "hi" in
+    assert (result.finish_reason = Some "plain_reply"))
+
+let%test_unit "trace_events_capture_and_jsonl" =
+  let seen = ref [] in
+  Trace.with_sink (fun ev -> seen := ev :: !seen) (fun () ->
+    Trace.emit (Trace.Tool_call_start { name = "bash"; args = "{}" });
+    Trace.log "info" "hello %d" 42);
+  (match !seen with
+   | [Trace.Log { level = "info"; message = "hello 42" };
+      Trace.Tool_call_start { name = "bash"; _ }] -> ()
+   | _ -> failwith "sink did not capture expected events");
+  (* with_sink must deregister afterwards. *)
+  let count_before = List.length !seen in
+  Trace.emit (Trace.Log { level = "info"; message = "unseen" });
+  assert (List.length !seen = count_before);
+  (* JSONL encoding carries the event tag. *)
+  (match Trace.event_to_json (Trace.Task_finished { summary = "ok" }) with
+   | `Assoc kvs ->
+     assert (List.assoc "event" kvs = `String "task_finished");
+     assert (List.mem_assoc "ts" kvs)
+   | _ -> failwith "event_to_json shape")
+
+let%test_unit "ui_visible_width_and_truncate" =
+  assert (Ui.visible_width "hello" = 5);
+  (* ANSI escapes don't count. *)
+  let styled = "\027[1;36mhello\027[0m" in
+  assert (Ui.visible_width styled = 5);
+  (* UTF-8 multi-byte sequences count once (box-drawing etc.). *)
+  assert (Ui.visible_width "─➤é" = 3);
+  assert (Ui.truncate_visible "abcdef" 10 = "abcdef");
+  let t = Ui.truncate_visible "abcdefghij" 6 in
+  assert (String.length t <= 8 (* 5 chars + UTF-8 ellipsis *));
+  assert (Re.execp (Re.compile (Re.str "…")) t)
+
+let%test_unit "config_api_keys_table" =
+  let tmp_config = "test_api_keys_config.toml" in
+  let oc = open_out tmp_config in
+  output_string oc "[api_keys]\ngroq = \"gsk_test_123\"\n";
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp_config;
+  Config.reload ();
+  let key = Config.get_api_key ~env_var:"CARAVAN_TEST_NO_SUCH_ENV" ~name:"groq" () in
+  Sys.remove tmp_config;
+  Unix.putenv "CARAVAN_CONFIG" "";
+  Config.reload ();
+  assert (key = Some "gsk_test_123")
+
+let%test_unit "effects_exec_tool_not_swallowed_by_permission_wrapper" =
+  (* Regression: wrapping in run_with_effects ~permission_policy used to
+     install a dead default Exec_tool handler, breaking every tool. *)
+  let tool = Tool.Tool (module CaravanTools.Read_file.Read_file) in
+  let path = "test_effects_regression.txt" in
+  let oc = open_out path in
+  output_string oc "payload";
+  close_out oc;
+  let res =
+    Effects.run_with_effects ~permission_policy:(fun _ _ -> true) (fun () ->
+      Tool.dispatch tool (Printf.sprintf {|{"path": "%s"}|} path))
+  in
+  Sys.remove path;
+  assert (res = "payload");
+  (* And denial still works. *)
+  let denied =
+    Effects.run_with_effects ~permission_policy:(fun _ _ -> false) (fun () ->
+      Tool.dispatch tool "{}")
+  in
+  assert (Re.execp (Re.compile (Re.str "Permission denied")) denied)

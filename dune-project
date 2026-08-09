@@ -19,9 +19,8 @@
  (description
   "Caravan provides a functional, type-safe interface for composing LLM pipelines with typed message passing, pluggable providers (Ollama, OpenAI-compatible, llama.cpp), output parsers, prompt templates, conversation memory, and an interactive TUI.")
  (depends
-  ocaml
-  (dune
-   (>= 3.21))
+  (ocaml
+   (>= 5.1))
   (eio
    (>= 1.0))
   (eio_main

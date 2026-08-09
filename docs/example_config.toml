@@ -2,17 +2,23 @@
 # Save this file to ~/.caravan/config.toml to customize defaults.
 
 # --- Provider Settings ---
-# Default LLM provider ("ollama", "openai", "llama_cpp")
+# Default LLM provider — run `caravan providers` for the full list:
+# ollama, llama_cpp, vllm, lmstudio, openai, anthropic, groq, openrouter,
+# together, deepseek, mistral, gemini, xai
 provider = "ollama"
 
-# Default model name
+# Default model name (omit to use the provider's registry default)
 model = "llama3.2"
 
-# Base URL for the provider's API (e.g. "http://127.0.0.1:11434/v1" or "https://api.openai.com/v1")
-base_url = "http://127.0.0.1:11434/v1"
+# Base URL override (only needed for custom/self-hosted endpoints)
+# base_url = "http://127.0.0.1:11434/v1"
 
-# API key for OpenAI-compatible providers
-openai_api_key = "sk-proj-..."
+# --- API keys ---
+# Prefer environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
+# The [api_keys] table is for hosts where a 0600 file beats env plumbing.
+# [api_keys]
+# openai    = "sk-proj-..."
+# anthropic = "sk-ant-..."
 
 # --- Agent Settings ---
 # Maximum turns an agent can perform per task (default: 10)
@@ -35,6 +41,16 @@ strict_mode = 1
 
 # Toggle LLM streaming output in interactive chats and agent turns (default: true)
 stream = true
+
+# Tool permission policy: "auto" (allow), "ask" (prompt before mutating
+# tools), "readonly" (deny mutating tools). Default: auto
+permissions = "auto"
+
+# Write a JSONL transcript of every session to ~/.caravan/logs/ (default: true)
+transcript = true
+
+# Inject budget-awareness nudges into agent loops (default: true)
+nudge = true
 
 # --- TUI Spinner & Progress indicators ---
 [spinner]

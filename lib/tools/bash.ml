@@ -1,5 +1,9 @@
 open Caravan.Tool
-let strict_mode =
+
+(** Strict mode (read lazily so env/config changes are honoured):
+    0 = permissive (any shell command), 1 = single-command discipline,
+    2 = tool hidden entirely (filtered out by the front-end). *)
+let strict_mode () =
   Caravan.Config.get_int_opt (Some "CARAVAN_STRICT_MODE") "strict_mode"
   |> Option.value ~default:1
 
@@ -7,15 +11,11 @@ module Bash : TOOL with type input = string and type output = string = struct
   let name = "bash"
   let aliases = ["sh"; "shell"; "terminal"; "cmd"; "exec"; "run_command"]
   let description =
-    let base =
-      "The primary tool for running and orchestrating CLI applications and system utilities. \
-       Use this to execute external programs, manage system tools, and process their output. \
-       Commands may contain '&&' and '||' for control flow."
-    in
-    if strict_mode = 1 then
-      base ^ " Do NOT separate multiple independent commands with ';' or newlines — \
-              issue each as its own tool call so intermediate results can be verified."
-    else base
+    "The primary tool for running and orchestrating CLI applications and system utilities. \
+     Use this to execute external programs, manage system tools, and process their output. \
+     stdout and stderr are both captured. Commands may contain '&&' and '||' for control flow. \
+     In strict mode, do NOT chain independent commands with ';' or newlines — issue each as \
+     its own tool call so intermediate results can be verified."
 
   type input = string
   type output = string
@@ -39,7 +39,7 @@ module Bash : TOOL with type input = string and type output = string = struct
     let open Yojson.Safe.Util in
     try
       let cmd = json |> member "command" |> to_string in
-      if strict_mode = 1 && has_delimiters cmd then
+      if strict_mode () = 1 && has_delimiters cmd then
         Error
           "Multiple commands detected (';' or newline). \
            Please issue each command as a separate tool call."
@@ -50,55 +50,17 @@ module Bash : TOOL with type input = string and type output = string = struct
 
   type _ Effect.t += Exec : input -> output Effect.t
 
-  let run_single cmd =
-    let ic = Unix.open_process_in cmd in
-    let out = In_channel.input_all ic in
-    let status = Unix.close_process_in ic in
-    (out, status)
-
-  let split_commands s =
-    String.split_on_char ';' s
-    |> List.concat_map (String.split_on_char '\n')
-    |> List.map String.trim
-    |> List.filter (fun t -> t <> "")
-
-  let execute_sequential commands =
-    let buf = Buffer.create 256 in
-    let rec loop = function
-      | [] -> Buffer.contents buf
-      | cmd :: rest ->
-        Buffer.add_string buf (Printf.sprintf "$ %s\n" cmd);
-        (match
-           (try run_single cmd
-            with e ->
-              let msg = "Error: " ^ Printexc.to_string e ^ "\n" in
-              (msg, Unix.WEXITED 1))
-         with
-         | (out, Unix.WEXITED 0) ->
-           Buffer.add_string buf out;
-           if out <> "" && out.[String.length out - 1] <> '\n' then
-             Buffer.add_char buf '\n';
-           loop rest
-         | (out, Unix.WEXITED n) ->
-           Buffer.add_string buf out;
-           Buffer.add_string buf (Printf.sprintf "[exit %d — stopped]\n" n);
-           Buffer.contents buf
-         | (out, _) ->
-           Buffer.add_string buf out;
-           Buffer.add_string buf "[killed by signal — stopped]\n";
-           Buffer.contents buf)
-    in
-    loop commands
-
+  (** Run through the shell with stderr merged into stdout, so the model
+      sees compiler errors, warnings, and diagnostics — not just stdout. *)
   let execute command =
-    if strict_mode = 1 then
-      (try
-        let (out, status) = run_single command in
-        match status with
-        | Unix.WEXITED 0 -> out
-        | Unix.WEXITED n -> Printf.sprintf "Command failed (exit %d):\n%s" n out
-        | _ -> "Command killed by signal.\n" ^ out
-      with e -> "Error executing command: " ^ Printexc.to_string e)
-    else
-      execute_sequential (split_commands command)
+    try
+      let wrapped = Printf.sprintf "( %s ) 2>&1" command in
+      let ic = Unix.open_process_in wrapped in
+      let out = In_channel.input_all ic in
+      match Unix.close_process_in ic with
+      | Unix.WEXITED 0 -> if out = "" then "(no output, exit 0)" else out
+      | Unix.WEXITED n -> Printf.sprintf "%s\n[exit status %d]" out n
+      | Unix.WSIGNALED n -> Printf.sprintf "%s\n[killed by signal %d]" out n
+      | Unix.WSTOPPED n -> Printf.sprintf "%s\n[stopped by signal %d]" out n
+    with e -> "Error executing command: " ^ Printexc.to_string e
 end

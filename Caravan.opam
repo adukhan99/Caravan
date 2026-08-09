@@ -10,8 +10,8 @@ tags: ["llm" "orchestration" "ai" "ollama" "openai" "llama.cpp"]
 homepage: "https://github.com/adukhan99/Caravan"
 bug-reports: "https://github.com/adukhan99/Caravan/issues"
 depends: [
-  "ocaml"
-  "dune" {>= "3.21" & >= "3.21"}
+  "dune" {>= "3.21"}
+  "ocaml" {>= "5.1"}
   "eio" {>= "1.0"}
   "eio_main" {>= "1.0"}
   "cohttp-eio" {>= "6.2.1"}

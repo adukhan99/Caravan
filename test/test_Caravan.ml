@@ -230,7 +230,8 @@ let%test_unit "subagent_session_and_compaction" =
     let list_models _net _cfg = ["mock"]
   end in
   let provider = Provider.Provider ((module MockProvider), ()) in
-  let parent_sess = Session.create ~tools:[] "parent_model" provider in
+  let parent_sess = Session.create ~tools:[] "parent_model" provider
+                    |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
   
   let spec : Subagent.subagent_spec = {
     name = "child_agent";
@@ -485,7 +486,8 @@ let%expect_test "session_summarise" =
       let list_models _net _cfg = ["mock"]
     end in
     let provider = Provider.Provider ((module MockProvider), ()) in
-    let sess = Session.create ~tools:[] "mock" provider in
+    let sess = Session.create ~tools:[] "mock" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let sess = Session.add_messages sess [Types.user_msg "hello"; Types.assistant_msg "hi"] in
     
     let (sess', sum) = Session.summarise env#net env#clock sess in
@@ -617,7 +619,8 @@ let%test_unit "session_with_model_override" =
       let list_models _net _cfg = ["model_check"]
     end in
     let provider = Provider.Provider ((module ModelCheckProvider), ()) in
-    let sess = Session.create ~tools:[] "initial_model" provider in
+    let sess = Session.create ~tools:[] "initial_model" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let (sess', _) = Session.turn env#net env#clock sess "hello" in
     assert (!last_model_called = "initial_model");
     let sess'' = Session.with_model sess' "switched_model" in
@@ -637,7 +640,8 @@ let%test_unit "tool_output_truncation_for_context" =
       let list_models _net _cfg = ["dummy"]
     end in
     let provider = Provider.Provider ((module DummyProvider), ()) in
-    let sess = Session.create ~tools:[] "dummy" provider in
+    let sess = Session.create ~tools:[] "dummy" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let sess = Session.set_max_tool_output_len sess (Some 50) in
     let long_tool_output = String.make 500 'A' in
     let messages = [
@@ -682,7 +686,8 @@ let%test_unit "summarize_tool_and_session_compaction" =
     end in
     let provider = Provider.Provider ((module MockSumProvider), ()) in
     let sum_tool = Tool.Tool (module CaravanTools.Summarize.Summarize) in
-    let sess = Session.create ~tools:[sum_tool] "mock" provider in
+    let sess = Session.create ~tools:[sum_tool] "mock" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let (sess', _) = Session.turn env#net env#clock sess "hello" in
     let hist = Session.history sess' in
     assert (List.length hist > 0);
@@ -717,7 +722,8 @@ let%test_unit "agent_turn_increment_and_max_turns" =
       let list_models _net _cfg = ["multi_turn"]
     end in
     let provider = Provider.Provider ((module MultiTurnProvider), ()) in
-    let sess = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
+    let sess = Session.create ~tools:[finish_tool; read_tool] "multi" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     
     let on_turn current max = turn_calls := (current, max) :: !turn_calls in
     let agent_cfg = Agent.{ max_turns = 5; continue_prompt = "continue"; nudge = false } in
@@ -731,7 +737,8 @@ let%test_unit "agent_turn_increment_and_max_turns" =
     (* Test max_turns limit enforcement *)
     call_count := 0;
     turn_calls := [];
-    let sess2 = Session.create ~tools:[finish_tool; read_tool] "multi" provider in
+    let sess2 = Session.create ~tools:[finish_tool; read_tool] "multi" provider
+                |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let agent_cfg_low = Agent.{ max_turns = 2; continue_prompt = "continue"; nudge = false } in
     let res_low = Agent.run ~config:agent_cfg_low ~on_turn env#net env#clock sess2 "Task max turns test" in
     (match res_low with
@@ -856,7 +863,8 @@ let%test_unit "agent_completion_not_fooled_by_stale_finish" =
     end in
     let provider = Provider.Provider ((module P), ()) in
     let finish_tool = Tool.Tool (module CaravanTools.Finish.Finish) in
-    let sess = Session.create ~tools:[finish_tool] "m" provider in
+    let sess = Session.create ~tools:[finish_tool] "m" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let sess = Session.set_memory_size sess 0 in
     (match Agent.run env#net env#clock sess "task one" with
      | Ok (sess1, r1) ->
@@ -882,7 +890,8 @@ let%test_unit "session_finish_reason_propagates" =
       let list_models _ _ = []
     end in
     let provider = Provider.Provider ((module Plain), ()) in
-    let sess = Session.create ~tools:[] "m" provider in
+    let sess = Session.create ~tools:[] "m" provider
+               |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
     let (_, result) = Session.turn env#net env#clock sess "hi" in
     assert (result.finish_reason = Some "plain_reply"))
 
@@ -1095,3 +1104,322 @@ let%test_unit "config_orchestrator_auto_population" =
   Unix.putenv "CARAVAN_CONFIG" "";
   Config.reload ()
 
+(* ── Cli_resolve tests ───────────────────────────────────────────────── *)
+
+(** Stub default_model that mirrors Registry.default_model for the
+    providers we test against, without pulling in CaravanProviders. *)
+let stub_default_model = function
+  | "ollama"    -> "llama3.2"
+  | "openai"    -> "gpt-4o-mini"
+  | "anthropic" -> "claude-sonnet-4-5"
+  | other       -> "default-for-" ^ other
+
+(** Helper: call [Cli_resolve.resolve] with the stub. *)
+let resolve_test ~provider_cli ~model_cli ~base_url_cli () =
+  Cli_resolve.resolve
+    ~default_model:stub_default_model
+    ~provider_cli ~model_cli ~base_url_cli ()
+
+(** Remove env vars that could leak between tests. *)
+let clear_cli_env () =
+  List.iter (fun v ->
+    (try Unix.putenv v "" with _ -> ())
+  ) ["CARAVAN_PROVIDER"; "CARAVAN_MODEL"; "CARAVAN_BASE_URL"]
+
+let%test_unit "cli_resolve_all_flags_override" =
+  (* When every CLI flag is supplied, they dominate unconditionally. *)
+  let tmp = "test_cli_resolve_1.toml" in
+  let oc = open_out tmp in
+  output_string oc "provider = \"ollama\"\nmodel = \"stale-model\"\nbase_url = \"http://stale\"\n";
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test
+      ~provider_cli:(Some "anthropic")
+      ~model_cli:(Some "claude-opus-4-5")
+      ~base_url_cli:(Some "https://my-proxy") ()
+  in
+  Sys.remove tmp; Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p = "anthropic");
+  assert (m = "claude-opus-4-5");
+  assert (u = Some "https://my-proxy")
+
+let%test_unit "cli_resolve_no_flags_matching_provider" =
+  (* No CLI flags, config provider matches → model and base_url read from config. *)
+  let tmp = "test_cli_resolve_2.toml" in
+  let oc = open_out tmp in
+  output_string oc "provider = \"openai\"\nmodel = \"gpt-4o\"\nbase_url = \"https://custom-openai\"\n";
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test ~provider_cli:None ~model_cli:None ~base_url_cli:None ()
+  in
+  Sys.remove tmp; Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p = "openai");
+  assert (m = "gpt-4o");
+  assert (u = Some "https://custom-openai")
+
+let%test_unit "cli_resolve_provider_mismatch_prevents_leak" =
+  (* Config says "ollama" but CLI says "anthropic".
+     Model and base_url from config must NOT leak across providers. *)
+  let tmp = "test_cli_resolve_3.toml" in
+  let oc = open_out tmp in
+  output_string oc "provider = \"ollama\"\nmodel = \"llama3.2:1b\"\nbase_url = \"http://my-ollama:11434\"\n";
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test
+      ~provider_cli:(Some "anthropic")
+      ~model_cli:None ~base_url_cli:None ()
+  in
+  Sys.remove tmp; Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p = "anthropic");
+  (* Model must be the stub default for anthropic, NOT the ollama config value *)
+  assert (m = "claude-sonnet-4-5");
+  (* base_url must NOT carry the ollama URL *)
+  assert (u = None)
+
+let%test_unit "cli_resolve_env_var_fallbacks" =
+  (* CARAVAN_PROVIDER env var selects the provider. But CARAVAN_MODEL and
+     CARAVAN_BASE_URL only kick in when the provider matches the TOML config,
+     because that's how the cross-provider leak guard works. *)
+
+  (* Case A: env var only, no config file → provider from env, model/url from defaults *)
+  let tmp = "test_cli_resolve_4.toml" in
+  if Sys.file_exists tmp then Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  Unix.putenv "CARAVAN_PROVIDER" "groq";
+  Unix.putenv "CARAVAN_MODEL" "llama-3.1-8b-instant";
+  Unix.putenv "CARAVAN_BASE_URL" "https://groq-proxy";
+  let (p, m, _u) =
+    resolve_test ~provider_cli:None ~model_cli:None ~base_url_cli:None ()
+  in
+  assert (p = "groq");
+  (* No config file → provider_matches_config is false → env model/url ignored *)
+  assert (m = stub_default_model "groq");
+
+  (* Case B: config file also says provider=groq → model/url env vars apply *)
+  let oc = open_out tmp in
+  output_string oc "provider = \"groq\"\n";
+  close_out oc;
+  Config.reload ();
+  let (p2, m2, u2) =
+    resolve_test ~provider_cli:None ~model_cli:None ~base_url_cli:None ()
+  in
+  clear_cli_env ();
+  Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p2 = "groq");
+  assert (m2 = "llama-3.1-8b-instant");
+  assert (u2 = Some "https://groq-proxy")
+
+let%test_unit "cli_resolve_provider_config_section" =
+  (* A [providers.myhost] table provides base_url even when the top-level
+     config has a different provider. *)
+  let tmp = "test_cli_resolve_5.toml" in
+  let oc = open_out tmp in
+  output_string oc {|
+provider = "ollama"
+model = "llama3.2"
+
+[providers.myhost]
+base_url = "http://myhost:8080/v1"
+|};
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test
+      ~provider_cli:(Some "myhost")
+      ~model_cli:None ~base_url_cli:None ()
+  in
+  Sys.remove tmp; Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p = "myhost");
+  (* Provider mismatch, so model falls back to the stub default *)
+  assert (m = "default-for-myhost");
+  (* base_url comes from [providers.myhost] *)
+  assert (u = Some "http://myhost:8080/v1")
+
+let%test_unit "cli_resolve_fully_default" =
+  (* Nothing set anywhere: hardcoded ollama defaults. *)
+  let tmp = "test_cli_resolve_6.toml" in
+  if Sys.file_exists tmp then Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test ~provider_cli:None ~model_cli:None ~base_url_cli:None ()
+  in
+  if Sys.file_exists tmp then Sys.remove tmp;
+  Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p = "ollama");
+  assert (m = "llama3.2");
+  assert (u = None)
+
+let%test_unit "cli_resolve_case_insensitive_provider_match" =
+  (* Config says "OpenAI" (capitalised), CLI says nothing → should still
+     match and use config model/base_url. *)
+  let tmp = "test_cli_resolve_7.toml" in
+  let oc = open_out tmp in
+  output_string oc "provider = \"OpenAI\"\nmodel = \"gpt-4o\"\nbase_url = \"https://custom\"\n";
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test ~provider_cli:None ~model_cli:None ~base_url_cli:None ()
+  in
+  Sys.remove tmp; Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  (* provider_name comes from get_string_opt, so it's the raw "OpenAI" *)
+  assert (p = "OpenAI");
+  (* The comparison is case-insensitive, so config model/url are used *)
+  assert (m = "gpt-4o");
+  assert (u = Some "https://custom")
+
+let%test_unit "cli_resolve_model_cli_with_mismatched_provider" =
+  (* Even when provider mismatches, an explicit model_cli is honoured. *)
+  let tmp = "test_cli_resolve_8.toml" in
+  let oc = open_out tmp in
+  output_string oc "provider = \"ollama\"\nmodel = \"llama3.2\"\n";
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp;
+  Config.reload ();
+  clear_cli_env ();
+  let (p, m, u) =
+    resolve_test
+      ~provider_cli:(Some "anthropic")
+      ~model_cli:(Some "claude-haiku-4-5")
+      ~base_url_cli:None ()
+  in
+  Sys.remove tmp; Unix.putenv "CARAVAN_CONFIG" ""; Config.reload ();
+  assert (p = "anthropic");
+  assert (m = "claude-haiku-4-5");
+  assert (u = None)
+
+(* ── Compaction_policy tests ─────────────────────────────────────────── *)
+
+let%test_unit "compaction_policy_edge_cases" =
+  let check ~auto ~mem_size ~len ~tools =
+    Compaction_policy.should_compact
+      ~auto_summarize:auto ~memory_size:mem_size ~history_length:len
+      ~tool_call_names:tools
+  in
+  (* overflow triggers compaction *)
+  assert (check ~auto:true ~mem_size:10 ~len:15 ~tools:[] = true);
+  (* size 0 means unlimited *)
+  assert (check ~auto:true ~mem_size:0 ~len:1000 ~tools:[] = false);
+  (* disabled means no auto compaction *)
+  assert (check ~auto:false ~mem_size:5 ~len:10 ~tools:[] = false);
+  (* no overflow, no compaction *)
+  assert (check ~auto:true ~mem_size:10 ~len:9 ~tools:[] = false);
+  (* explicit tool triggers compaction even if auto=false or memory_size=0 *)
+  assert (check ~auto:false ~mem_size:0 ~len:0 ~tools:["summarize"] = true);
+  assert (check ~auto:true ~mem_size:10 ~len:5 ~tools:["compress_history"] = true)
+
+(* ── Agent_output tests ──────────────────────────────────────────────── *)
+
+let%test_unit "agent_output_format" =
+  let fake_result = Types.(wrap_result ~raw_response:"" ~model:"m" ~provider:"p"
+    (assistant_msg "done")) in
+  
+  let out_plain = Agent_output.format_success ~mode:Agent_output.Plain ~result:fake_result ~transcript:None in
+  assert (String.trim out_plain = "done");
+  
+  let out_json = Agent_output.format_success ~mode:Agent_output.Json ~result:fake_result ~transcript:None in
+  assert (Re.execp (Re.compile (Re.str "\"ok\":true")) out_json);
+  assert (Re.execp (Re.compile (Re.str "\"result\":\"done\"")) out_json);
+
+  let err_plain = Agent_output.format_error ~mode:Agent_output.Plain ~message:"failed" ~transcript:None in
+  assert (err_plain = "[caravan agent] failed");
+
+  let err_json = Agent_output.format_error ~mode:Agent_output.Json ~message:"failed" ~transcript:None in
+  assert (Re.execp (Re.compile (Re.str "\"ok\":false")) err_json);
+  assert (Re.execp (Re.compile (Re.str "\"error\":\"failed\"")) err_json)
+
+(* ── Session.summarise prompt injection tests ────────────────────────── *)
+
+let%test_unit "session_summarise_custom_prompt" =
+  let last_prompt = ref "" in
+  let module MockProvider : Provider.PROVIDER with type config = unit = struct
+    type config = unit
+    let name = "mock"
+    let complete _net _cfg ?model:_ ?options:_ ?tools:_ msgs =
+      last_prompt := (List.hd (List.rev msgs)).Types.content;
+      Types.wrap_result ~raw_response:"summary" ~model:"mock" ~provider:"mock"
+        (Types.assistant_msg "summary")
+    let stream _net _cfg ?model:_ ?options:_ ?tools:_ _msgs ~on_token:_ =
+      failwith "not implemented"
+    let list_models _net _cfg = ["mock"]
+  end in
+  let packed_provider = Provider.Provider ((module MockProvider), ()) in
+  
+  Eio_main.run (fun env ->
+    let sess = Session.create "mock" packed_provider
+             |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
+    let sess = Session.add_messages sess [Types.user_msg "hello"] in
+    
+    let custom_prompt_fn _msgs = "CUSTOM_PROMPT_PREFIX: Summarise this." in
+    
+    let (_sess', summary) = Session.summarise ~prompt_fn:custom_prompt_fn env#net env#clock sess in
+    
+    assert (summary = "summary");
+    assert (String.starts_with ~prefix:"CUSTOM_PROMPT_PREFIX:" !last_prompt)
+  )
+
+(* ── Doctor tests ────────────────────────────────────────────────────── *)
+
+let%test_unit "doctor_run_checks_all_pass" =
+  let checks = Doctor.run_checks
+    ~find_provider:(fun n -> Some {
+        Doctor.name = n;
+        kind = Doctor.Cloud;
+        base_url = "http://mock";
+        requires_key = true;
+        key_env = Some "MOCK_KEY";
+      })
+    ~api_key_for:(fun _ -> Some "mock-key")
+    ~list_models:(fun _ _ -> ["mock-model"])
+    ~subagents_roster:[]
+    ~subagents_enabled:true
+    ()
+  in
+  let has_fail = List.exists (fun (c : Doctor.check) -> c.severity = Doctor.Fail) checks in
+  assert (not has_fail)
+
+let%test_unit "doctor_run_checks_missing_key" =
+  let checks = Doctor.run_checks
+    ~find_provider:(fun n -> Some {
+        Doctor.name = n;
+        kind = Doctor.Cloud;
+        base_url = "http://mock";
+        requires_key = true;
+        key_env = Some "MOCK_KEY";
+      })
+    ~api_key_for:(fun _ -> None)
+    ~list_models:(fun _ _ -> ["mock-model"])
+    ~subagents_roster:[]
+    ~subagents_enabled:true
+    ()
+  in
+  let has_fail = List.exists (fun (c : Doctor.check) -> c.severity = Doctor.Fail) checks in
+  assert has_fail
+
+let%test_unit "doctor_run_checks_unknown_provider" =
+  let checks = Doctor.run_checks
+    ~find_provider:(fun _ -> None)
+    ~api_key_for:(fun _ -> Some "mock-key")
+    ~list_models:(fun _ _ -> ["mock-model"])
+    ~subagents_roster:[]
+    ~subagents_enabled:true
+    ()
+  in
+  let has_fail = List.exists (fun (c : Doctor.check) -> c.severity = Doctor.Fail) checks in
+  assert has_fail

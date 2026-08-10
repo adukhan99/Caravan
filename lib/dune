@@ -43,6 +43,10 @@
   Chain
   Mcp
   Value
+  Cli_resolve
+  Compaction_policy
+  Agent_output
+  Doctor
   Redis_store))
 
 (documentation

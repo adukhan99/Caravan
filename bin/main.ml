@@ -79,42 +79,9 @@ let resolve_provider_or_exit ~provider_name ~model ~base_url =
 
 (** Unified resolution of (provider_name, model, base_url) given optional CLI overrides with README claim *)
 let resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli =
-  let configured_provider = Config.get_string "provider" in
-  let provider_name =
-    match provider_cli with
-    | Some p -> p
-    | None ->
-      Config.get_string_opt (Some "CARAVAN_PROVIDER") "provider"
-      |> Option.value ~default:"ollama"
-  in
-  let provider_matches_config =
-    match configured_provider with
-    | Some cp -> String.lowercase_ascii (String.trim cp) = String.lowercase_ascii (String.trim provider_name)
-    | None -> false
-  in
-  let model =
-    match model_cli with
-    | Some m -> m
-    | None ->
-      let from_cfg =
-        if provider_matches_config then
-          Config.get_string_opt (Some "CARAVAN_MODEL") "model"
-        else None
-      in
-      Option.value ~default:(Registry.default_model provider_name) from_cfg
-  in
-  let base_url =
-    match base_url_cli with
-    | Some _ as url -> url
-    | None ->
-      match Config.get_provider_config provider_name with
-      | Some pcfg -> Some pcfg.base_url
-      | None ->
-        if provider_matches_config then
-          Config.get_string_opt (Some "CARAVAN_BASE_URL") "base_url"
-        else None
-  in
-  (provider_name, model, base_url)
+  Cli_resolve.resolve
+    ~default_model:Registry.default_model
+    ~provider_cli ~model_cli ~base_url_cli ()
 
 (** Build a session inside [Eio_main.run]: static + MCP tools, plus the
     config-declared delegate tool when subagents are enabled. *)
@@ -824,41 +791,26 @@ let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_ou
         else
           Agent.run ~config ~on_turn env#net env#clock sess task)
     in
+    let mode = if json_out then Agent_output.Json else Agent_output.Plain in
     match result with
     | Ok (_sess, res) ->
       if json_out then
-        print_endline (Yojson.Safe.to_string (`Assoc [
-          ("ok", `Bool true);
-          ("result", `String res.value.content);
-          ("model", `String res.model);
-          ("provider", `String res.provider);
-          ("turns", (match res.turn_count with Some t -> `Int t | None -> `Null));
-          ("usage", (match res.usage with
-            | Some u -> `Assoc [
-                ("prompt_tokens", `Int u.prompt_tokens);
-                ("completion_tokens", `Int u.completion_tokens)]
-            | None -> `Null));
-          ("transcript", (match transcript with
-            | Some p -> `String p | None -> `Null));
-        ]))
+        print_endline (Agent_output.format_success ~mode ~result:res ~transcript)
       else begin
         if not stream_enabled then begin
           print_newline ();
-          println_ansi (render_markdown (String.trim res.value.content))
+          println_ansi (render_markdown (Agent_output.format_success ~mode ~result:res ~transcript))
         end else print_newline ();
         if not quiet && is_tty then
           println_ansi (dim ("  " ^ Monitor.format_usage res))
       end
     | Error e ->
       exit_code := 1;
+      let msg = Agent_output.format_error ~mode ~message:e ~transcript in
       if json_out then
-        print_endline (Yojson.Safe.to_string (`Assoc [
-          ("ok", `Bool false); ("error", `String e);
-          ("transcript", (match transcript with
-            | Some p -> `String p | None -> `Null));
-        ]))
+        print_endline msg
       else
-        Printf.eprintf "[caravan agent] %s\n%!" e
+        Printf.eprintf "%s\n%!" msg
   );
   exit !exit_code
 
@@ -1146,98 +1098,49 @@ let init_cmd =
 
 let run_doctor () =
   println_ansi (bold (cyan "\n  Caravan system diagnostics\n"));
-  let ok   fmt = Printf.ksprintf (fun s -> println_ansi (green  ("  ✓ " ^ s))) fmt in
-  let bad  fmt = Printf.ksprintf (fun s -> println_ansi (red    ("  ✗ " ^ s))) fmt in
-  let warn fmt = Printf.ksprintf (fun s -> println_ansi (yellow ("  ⚠ " ^ s))) fmt in
-  let checks_passed = ref true in
-  let fail () = checks_passed := false in
-
-  (* Config file *)
-  let path = Config.config_path () in
-  if Sys.file_exists path then begin
-    (match Config.load_toml () with
-     | Some _ -> ok "Config file valid TOML (%s)" path
-     | None -> fail (); bad "Config file has TOML syntax errors (%s)" path);
-    (try
-       let st = Unix.stat path in
-       if st.Unix.st_perm land 0o077 <> 0 then
-         warn "Config is group/world-readable — consider: chmod 600 %s" path
-     with _ -> ())
-  end else
-    warn "No config file at %s (run 'caravan init')" path;
-
-  (* Provider *)
-  let provider_name =
-    Config.get_string_opt (Some "CARAVAN_PROVIDER") "provider"
-    |> Option.value ~default:"ollama"
+  
+  let checks = Doctor.run_checks
+    ~find_provider:(fun n ->
+      match Registry.find n with
+      | Some e -> Some Doctor.{
+          name = e.name;
+          kind = (match e.kind with Registry.Local -> Local | Registry.Cloud -> Cloud);
+          base_url = e.base_url;
+          requires_key = e.requires_key;
+          key_env = e.key_env;
+        }
+      | None -> None
+    )
+    ~api_key_for:(fun info ->
+      let e = Option.get (Registry.find info.name) in
+      Registry.api_key_for e
+    )
+    ~list_models:(fun info base_url ->
+      let e = Option.get (Registry.find info.name) in
+      let model = Config.get_string_opt (Some "CARAVAN_MODEL") "model" |> Option.value ~default:e.default_model in
+      Eio_main.run (fun env ->
+        let p = Registry.make_provider ?base_url ~model e.name in
+        Provider.list_models_packed env#net p
+      )
+    )
+    ~subagents_roster:(Subagents.describe ())
+    ~subagents_enabled:(Subagents.enabled ())
+    ()
   in
-  (match Registry.find provider_name with
-   | None ->
-     fail ();
-     bad "Provider '%s' unknown. Supported: %s"
-       provider_name (String.concat ", " (Registry.names ()))
-   | Some e ->
-     ok "Provider '%s' supported" e.name;
-     let base_url = Config.get_string_opt (Some "CARAVAN_BASE_URL") "base_url" in
-     let model =
-       Config.get_string_opt (Some "CARAVAN_MODEL") "model"
-       |> Option.value ~default:e.default_model
-     in
-     if e.requires_key then begin
-       match Registry.api_key_for e with
-       | Some _ -> ok "API key for %s found" e.name
-       | None ->
-         fail ();
-         bad "API key for %s missing — set %s or [api_keys] %s in config"
-           e.name (Option.value ~default:"its env var" e.key_env) e.name
-     end;
-     (match e.kind with
-      | Registry.Local ->
-        let url = Option.value ~default:e.base_url base_url in
-        Eio_main.run (fun env ->
-          try
-            let p = Registry.make_provider ?base_url ~model e.name in
-            let models = Provider.list_models_packed env#net p in
-            ok "%s reachable at %s (%d models)" e.name url (List.length models)
-          with exn ->
-            fail ();
-            bad "Could not reach %s at %s" e.name url;
-            println_ansi (dim ("    " ^ Caravan_error.humanize exn)))
-      | Registry.Cloud -> ()));
 
-  (* Transcript dir *)
-  if Config.get_transcript_enabled () then begin
-    let dir = Config.log_dir () in
-    (try
-       if not (Sys.file_exists dir) then Unix.mkdir dir 0o700;
-       ok "Transcript directory writable (%s)" dir
-     with _ -> warn "Cannot create transcript directory %s" dir)
-  end;
-
-  (* Subagents *)
-  let roster = Subagents.describe () in
-  if roster <> [] then begin
-    if not (Subagents.enabled ()) then
-      warn "%d subagent(s) configured but enable_subagents = false" (List.length roster);
-    List.iter (fun ((cfg : Config.subagent_config), status) ->
-      if String.length status >= 10 && String.sub status 0 10 = "UNRESOLVED" then begin
-        fail ();
-        bad "Subagent '%s': provider '%s' unresolved (no [providers.%s] table, not in registry)"
-          cfg.name cfg.provider_ref cfg.provider_ref
-      end else if Re.execp (Re.compile (Re.str "unset")) status then
-        warn "Subagent '%s': %s" cfg.name status
-      else
-        ok "Subagent '%s' → %s via %s" cfg.name cfg.model status
-    ) roster
-  end;
-
-  (* MCP servers *)
-  let mcp_servers = Config.get_mcp_servers () in
-  List.iter (fun (srv : Config.mcp_server_config) ->
-    let cmd_ok = Sys.command (Printf.sprintf "command -v %s >/dev/null 2>&1" (Filename.quote srv.command)) = 0 in
-    if cmd_ok then ok "MCP server '%s': command '%s' found" srv.name srv.command
-    else begin fail (); bad "MCP server '%s': command '%s' not in PATH" srv.name srv.command end
-  ) mcp_servers;
+  let checks_passed = ref true in
+  List.iter (fun (c : Doctor.check) ->
+    let status_str = match c.severity with
+      | Pass -> green "  ✓ "
+      | Warn -> yellow "  ⚠ "
+      | Fail -> checks_passed := false; red "  ✗ "
+    in
+    let hint_str = match c.hint with
+      | Some h -> dim ("\n      " ^ h)
+      | None -> ""
+    in
+    println_ansi (Printf.sprintf "%s%s: %s%s" status_str (bold c.label) c.message hint_str)
+  ) checks;
 
   print_newline ();
   if !checks_passed then

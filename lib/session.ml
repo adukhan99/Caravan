@@ -20,12 +20,23 @@ let default_config model = {
   auto_summarize      = true;
 }
 
+type spinner_config = {
+  enabled : bool;
+  get_verb : string -> string;
+}
+
+let default_spinner_config () = {
+  enabled = Config.get_spinner_enabled ();
+  get_verb = fun v -> Config.pick_verb (Config.get_verbs v);
+}
+
 type t = {
   cfg      : config;
   provider : Provider.packed_provider;
   memory   : Memory.packed_memory;
   turn_idx : int;
   tools    : Tool.packed_tool list;
+  spinner_cfg : spinner_config;
 }
 
 let create ?(config = fun m -> default_config m) ?(tools=[]) model provider =
@@ -37,6 +48,7 @@ let create ?(config = fun m -> default_config m) ?(tools=[]) model provider =
     memory = Memory.Mem ((module Memory.Ring), Memory.Ring.make ~window ());
     turn_idx = 0;
     tools;
+    spinner_cfg = default_spinner_config ();
   }
 
 let set_system sess text =
@@ -63,6 +75,9 @@ let set_auto_summarize sess auto =
 let set_options sess f =
   let cfg = { sess.cfg with options = f sess.cfg.options } in
   { sess with cfg }
+
+let with_spinner_config spinner_cfg sess =
+  { sess with spinner_cfg }
 
 let clear sess =
   let Memory.Mem ((module M), mem) = sess.memory in
@@ -126,8 +141,8 @@ let execute_tool_calls _net clock sess tcs =
       tool_msg tc.id msg
     | Some packed ->
       Trace.emit (Trace.Tool_call_start { name = tc.name; args = tc.args });
-      let verb = Config.pick_verb (Config.get_verbs tc.name) in
-      let enabled = Config.get_spinner_enabled () in
+      let verb = sess.spinner_cfg.get_verb tc.name in
+      let enabled = sess.spinner_cfg.enabled in
       let t0 = Unix.gettimeofday () in
       let output_str = Ui.with_spinner clock verb enabled (fun () -> Tool.dispatch packed tc.args) in
       let duration = Unix.gettimeofday () -. t0 in
@@ -138,25 +153,30 @@ let execute_tool_calls _net clock sess tcs =
       tool_msg tc.id output_str
   ) tcs
 
-let summarise net clock sess =
+let default_prompt_fn msgs =
+  let format_history =
+    String.concat "\n"
+      (List.map (fun m ->
+         Printf.sprintf "[%s]: %s" (role_to_string m.role) m.content) msgs)
+  in
+  "Please provide a highly concise summary of the following conversation history. " ^
+  "Focus on preserving key details, facts, contexts, and instructions. " ^
+  "Write ONLY the plain-text summary, with no meta-commentary, introductory text, or headers.\n\n" ^
+  "Conversation History:\n" ^
+  format_history
+
+let summarise ?prompt_fn net clock sess =
   let hist = history sess in
   if hist = [] then
     (sess, "Conversation history is empty; nothing to summarize.")
   else
-    let format_history msgs =
-      String.concat "\n"
-        (List.map (fun m ->
-           Printf.sprintf "[%s]: %s" (role_to_string m.role) m.content) msgs)
-    in
     let prompt =
-      "Please provide a highly concise summary of the following conversation history. " ^
-      "Focus on preserving key details, facts, contexts, and instructions. " ^
-      "Write ONLY the plain-text summary, with no meta-commentary, introductory text, or headers.\n\n" ^
-      "Conversation History:\n" ^
-      format_history hist
+      match prompt_fn with
+      | Some f -> f hist
+      | None -> default_prompt_fn hist
     in
-    let verb = Config.pick_verb (Config.get_verbs "summarizing") in
-    let enabled = Config.get_spinner_enabled () in
+    let verb = sess.spinner_cfg.get_verb "summarizing" in
+    let enabled = sess.spinner_cfg.enabled in
     Trace.emit Trace.Summarize_start;
     let result = Ui.with_spinner clock verb enabled (fun () ->
       Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:[] sess.provider [user_msg prompt]
@@ -205,16 +225,17 @@ let run_turn_step ?max_turns ?on_turn net clock sess (reply : chat_message) =
     in
     let sess_after_tools = { new_sess with memory = memory_with_tools } in
     
-    (* Trigger summarization if 'summarize' tool was executed or if history size threshold reached *)
-    let has_summarize = List.exists (fun tc -> tc.name = "summarize" || tc.name = "compress_history" || tc.name = "summarise") tcs in
+    (* Trigger summarization if explicit tool was executed or if history size threshold reached *)
+    let tool_call_names = List.map (fun tc -> tc.name) tcs in
     let Memory.Mem ((module M2), mem2) = memory_with_tools in
+    let compact = Compaction_policy.should_compact
+      ~auto_summarize:sess.cfg.auto_summarize
+      ~memory_size:sess.cfg.memory_size
+      ~history_length:(M2.length mem2)
+      ~tool_call_names
+    in
     let sess_after_sum =
-      if has_summarize then
-        let (s, _) = summarise net clock sess_after_tools in
-        s
-      (* memory_size = 0 means unlimited — never auto-summarize then. *)
-      else if sess.cfg.auto_summarize && sess.cfg.memory_size > 0
-              && M2.length mem2 > sess.cfg.memory_size then
+      if compact then
         let (s, _) = summarise net clock sess_after_tools in
         s
       else
@@ -254,8 +275,8 @@ let emit_assistant_reply (reply : chat_message) =
   Trace.emit (Trace.Assistant_reply { content = reply.content; tool_call_names })
 
 let rec run_conversations ?max_turns ?on_turn net clock sess =
-  let verb = Config.pick_verb (Config.get_verbs "thinking") in
-  let enabled = Config.get_spinner_enabled () in
+  let verb = sess.spinner_cfg.get_verb "thinking" in
+  let enabled = sess.spinner_cfg.enabled in
   let result = Ui.with_spinner clock verb enabled (fun () ->
     Provider.complete_packed net ~model:sess.cfg.model ~options:sess.cfg.options ~tools:sess.tools sess.provider (history_for_llm sess)
   ) in
@@ -275,8 +296,8 @@ let turn net clock sess user_input =
   run_conversations net clock sess'
 
 let rec run_conversations_stream ?max_turns ?on_turn net clock sess ~on_token =
-  let verb = Config.pick_verb (Config.get_verbs "thinking") in
-  let enabled = Config.get_spinner_enabled () in
+  let verb = sess.spinner_cfg.get_verb "thinking" in
+  let enabled = sess.spinner_cfg.enabled in
   let result_with_meta =
     Eio.Switch.run (fun sw ->
       let promise, resolver = Eio.Promise.create () in

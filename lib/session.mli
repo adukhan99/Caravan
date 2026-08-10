@@ -11,6 +11,13 @@ type config = {
 
 val default_config : string -> config
 
+type spinner_config = {
+  enabled : bool;
+  get_verb : string -> string;
+}
+
+val default_spinner_config : unit -> spinner_config
+
 type t
 
 val create : ?config:(string -> config) -> ?tools:Tool.packed_tool list -> string -> Provider.packed_provider -> t
@@ -20,6 +27,7 @@ val set_memory_size : t -> int -> t
 val set_max_tool_output_len : t -> int option -> t
 val set_auto_summarize : t -> bool -> t
 val set_options : t -> (gen_options -> gen_options) -> t
+val with_spinner_config : spinner_config -> t -> t
 val clear : t -> t
 val add_messages : t -> chat_message list -> t
 val with_provider : t -> Provider.packed_provider -> t
@@ -38,7 +46,7 @@ val run_conversations_stream : ?max_turns:int -> ?on_turn:(int -> int -> unit) -
 val turn : _ Eio.Net.t -> _ Eio.Time.clock -> t -> string -> t * chat_message result_with_meta
 val turn_stream : _ Eio.Net.t -> _ Eio.Time.clock -> t -> string -> on_token:(string -> unit) -> t * chat_message result_with_meta
 
-val summarise : _ Eio.Net.t -> _ Eio.Time.clock -> t -> t * string
+val summarise : ?prompt_fn:(chat_message list -> string) -> _ Eio.Net.t -> _ Eio.Time.clock -> t -> t * string
 
 val export_json : t -> Yojson.Safe.t
 val pp_history : Format.formatter -> t -> unit

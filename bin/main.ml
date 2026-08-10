@@ -77,12 +77,44 @@ let resolve_provider_or_exit ~provider_name ~model ~base_url =
     Printf.eprintf "%s\n%!" msg;
     exit 2
 
-let effective_model ~provider_name = function
-  | Some m -> m
-  | None ->
-    (match Config.get_string_opt (Some "CARAVAN_MODEL") "model" with
-     | Some m -> m
-     | None -> Registry.default_model provider_name)
+(** Unified resolution of (provider_name, model, base_url) given optional CLI overrides with README claim *)
+let resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli =
+  let configured_provider = Config.get_string "provider" in
+  let provider_name =
+    match provider_cli with
+    | Some p -> p
+    | None ->
+      Config.get_string_opt (Some "CARAVAN_PROVIDER") "provider"
+      |> Option.value ~default:"ollama"
+  in
+  let provider_matches_config =
+    match configured_provider with
+    | Some cp -> String.lowercase_ascii (String.trim cp) = String.lowercase_ascii (String.trim provider_name)
+    | None -> false
+  in
+  let model =
+    match model_cli with
+    | Some m -> m
+    | None ->
+      let from_cfg =
+        if provider_matches_config then
+          Config.get_string_opt (Some "CARAVAN_MODEL") "model"
+        else None
+      in
+      Option.value ~default:(Registry.default_model provider_name) from_cfg
+  in
+  let base_url =
+    match base_url_cli with
+    | Some _ as url -> url
+    | None ->
+      match Config.get_provider_config provider_name with
+      | Some pcfg -> Some pcfg.base_url
+      | None ->
+        if provider_matches_config then
+          Config.get_string_opt (Some "CARAVAN_BASE_URL") "base_url"
+        else None
+  in
+  (provider_name, model, base_url)
 
 (** Build a session inside [Eio_main.run]: static + MCP tools, plus the
     config-declared delegate tool when subagents are enabled. *)
@@ -701,21 +733,16 @@ let repl net clock st =
 (* ── CLI arguments ────────────────────────────────────────────────────── *)
 
 let provider_arg =
-  let doc = "Provider to use. See $(b,caravan providers) for the list." in
-  let default =
-    Config.get_string_opt (Some "CARAVAN_PROVIDER") "provider"
-    |> Option.value ~default:"ollama"
-  in
-  Arg.(value & opt string default & info ["p"; "provider"] ~docv:"PROVIDER" ~doc)
+  let doc = "Provider to use (defaults to config provider or ollama). See $(b,caravan providers) for the list." in
+  Arg.(value & opt (some string) None & info ["p"; "provider"] ~docv:"PROVIDER" ~doc)
 
 let model_arg =
-  let doc = "Model name (defaults to the provider's default model)." in
+  let doc = "Model name (defaults to config model or provider default)." in
   Arg.(value & opt (some string) None & info ["m"; "model"] ~docv:"MODEL" ~doc)
 
 let base_url_arg =
   let doc = "Base URL override for the provider API." in
-  let default = Config.get_string_opt (Some "CARAVAN_BASE_URL") "base_url" in
-  Arg.(value & opt (some string) default & info ["base-url"] ~docv:"URL" ~doc)
+  Arg.(value & opt (some string) None & info ["base-url"] ~docv:"URL" ~doc)
 
 let system_arg =
   let doc = "System prompt for the session or completion." in
@@ -724,10 +751,12 @@ let system_arg =
 
 (* ── repl command ─────────────────────────────────────────────────────── *)
 
-let run_repl model provider_name base_url system =
+let run_repl model_cli provider_cli base_url_cli system =
   init_mcp ();
   let transcript = setup_frontend () in
-  let model = effective_model ~provider_name model in
+  let (provider_name, model, base_url) =
+    resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
+  in
   if is_tty && Config.is_first_run () then
     println_ansi (yellow "  First time here? Run 'caravan init' for guided setup.\n");
   Eio_main.run (fun env ->
@@ -767,11 +796,13 @@ let repl_cmd =
 
 (* ── agent command (one-shot autonomy) ────────────────────────────────── *)
 
-let run_agent model provider_name base_url system max_turns quiet json_out task =
+let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_out task =
   init_mcp ();
   let quiet = quiet || json_out in
   let transcript = setup_frontend ~quiet () in
-  let model = effective_model ~provider_name model in
+  let (provider_name, model, base_url) =
+    resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
+  in
   let exit_code = ref 0 in
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
@@ -879,10 +910,12 @@ let run_cmd =
 
 (* ── complete command ─────────────────────────────────────────────────── *)
 
-let run_complete model provider_name base_url system prompt_text =
+let run_complete model_cli provider_cli base_url_cli system prompt_text =
   init_mcp ();
   let _transcript = setup_frontend () in
-  let model = effective_model ~provider_name model in
+  let (provider_name, model, base_url) =
+    resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
+  in
   Eio_main.run (fun env ->
     Effects.with_net env#net @@ fun () ->
     let sess = make_session ~net:env#net ~clock:env#clock
@@ -917,8 +950,10 @@ let complete_cmd =
 
 (* ── models command ───────────────────────────────────────────────────── *)
 
-let run_models model provider_name base_url =
-  let model = effective_model ~provider_name model in
+let run_models model_cli provider_cli base_url_cli =
+  let (provider_name, model, base_url) =
+    resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
+  in
   Eio_main.run (fun env ->
     let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
     (try
@@ -1268,10 +1303,12 @@ let config_cmd =
 
 (* ── web command ──────────────────────────────────────────────────────── *)
 
-let run_web model provider_name base_url system port =
+let run_web model_cli provider_cli base_url_cli system port =
   init_mcp ();
   let _transcript = setup_frontend ~quiet:true () in
-  let model = effective_model ~provider_name model in
+  let (provider_name, model, base_url) =
+    resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
+  in
   Web.serve ~port ~provider_name ~model
     ~make_session:(fun env ->
       make_session ~net:env#net ~clock:env#clock

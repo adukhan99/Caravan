@@ -16,12 +16,16 @@ Caravan is partitioned into three focused libraries:
 - {!module-Caravan.Chain}: Composable typed LLM pipelines with monadic Result-binding ([|>>]), parallel execution, and retries.
 - {!module-Caravan.Session}: Multi-turn session state, system prompts, turn tracking, and history management.
 - {!module-Caravan.Memory}: Context window management and compaction strategies (Ring buffer, Summary, Hierarchical).
+- {!module-Caravan.Compaction_policy}: History compaction trigger rules and context budget thresholds.
 - {!module-Caravan.Trace}: Structured event streaming and audit logging (JSONL sink).
 - {!module-Caravan.Types}: Core message types ([chat_message], [role], [result_with_meta], [usage_stats]).
 - {!module-Caravan.Provider}: Abstract LLM backend interface and packed existential provider wrapper.
 - {!module-Caravan.Tool}: First-class module tool interface ([TOOL]) and effect execution.
 - {!module-Caravan.Subagent}: Isolation and delegation of sub-tasks to dedicated worker subagents.
 - {!module-Caravan.Permission}: Security permission policies ([auto], [ask], [readonly]) and mutating tool guards.
+- {!module-Caravan.Config}: System & agent configuration loading ([config.toml]), validation, and default resolution.
+- {!module-Caravan.Redis_store}: Redis-backed persistent session storage for conversation history.
+- {!module-Caravan.Caravan_error}: Unified structural error types, exception handlers, and safe execution wrappers.
 - {!module-Caravan.Lisp}: Embedded Slip micro-LISP interpreter for programmatic tool composition.
 - {!module-Caravan.Mcp}: Model Context Protocol (MCP) server integration and client registry.
 - {!module-Caravan.Prompt}: Composable conversation building via a Writer monad.
@@ -29,3 +33,10 @@ Caravan is partitioned into three focused libraries:
 - {!module-Caravan.Parser}: Type-safe output parsers for model responses.
 - {!module-Caravan.Tls}: Verified TLS connection setup with system CA store integration.
 - {!module-Caravan.Ui}: Terminal rendering, spinners, and interactive TUI components.
+
+{1 CLI & Diagnostics Helper Modules}
+
+- {!module-Caravan.Cli_resolve}: CLI argument resolution and provider/model fallback logic.
+- {!module-Caravan.Agent_output}: Plain text and JSON formatting for agent run outputs.
+- {!module-Caravan.Doctor}: System environment, provider readiness, and configuration diagnostics.
+

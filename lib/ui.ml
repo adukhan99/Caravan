@@ -433,18 +433,23 @@ let spinner_loop clock cfg verb =
        in
        loop 0)
 
-(** Poll loop — checks [stop] every frame; exits cleanly when it returns [true]. *)
-let spinner_poll_loop clock cfg verb stop =
+(** Promise-watching loop — wakes IMMEDIATELY when [promise] resolves
+    (racing the frame sleep against the promise), then erases its line.
+    Fast wake matters: any delay here is a window in which the caller's
+    first streamed tokens would be drawn and then wiped by our erase. *)
+let spinner_poll_loop clock cfg verb promise =
   Fun.protect
     ~finally:(fun () -> Printf.eprintf "\r\027[K%!")
     (fun () ->
        let rec loop idx =
-         if stop () then ()
+         if Eio.Promise.is_resolved promise then ()
          else begin
            let frame    = cfg.Spinner.frames.(idx mod Array.length cfg.Spinner.frames) in
            let color_fn = cfg.Spinner.colors.(idx mod Array.length cfg.Spinner.colors) in
            Printf.eprintf "\r%s %s...%!" (color_fn frame) verb;
-           Eio.Time.sleep clock cfg.Spinner.interval;
+           Eio.Fiber.first
+             (fun () -> Eio.Time.sleep clock cfg.Spinner.interval)
+             (fun () -> Eio.Promise.await promise);
            loop (idx + 1)
          end
        in
@@ -457,10 +462,18 @@ let with_spinner clock verb enabled fn =
     let cfg = Spinner.of_verb verb in
     Eio.Fiber.first (fun () -> spinner_loop clock cfg verb) fn
 
-(** Fork a spinner fiber that watches an Eio promise and stops when it resolves. *)
+(** Fork a spinner fiber that watches [promise] and stops when it
+    resolves. Returns a handshake promise that resolves only AFTER the
+    spinner has erased its line — callers must await it before printing
+    the first streamed output, or the erase races the tokens and eats
+    the beginning of the reply. Returns [None] when no spinner runs. *)
 let run_spinner_until_promise sw clock verb enabled promise =
-  if spinner_allowed enabled then
+  if not (spinner_allowed enabled) then None
+  else begin
+    let stopped, resolver = Eio.Promise.create () in
     Eio.Fiber.fork ~sw (fun () ->
       let cfg = Spinner.of_verb verb in
-      spinner_poll_loop clock cfg verb (fun () -> Eio.Promise.is_resolved promise)
-    )
+      spinner_poll_loop clock cfg verb promise;
+      Eio.Promise.resolve resolver ());
+    Some stopped
+  end

@@ -174,3 +174,14 @@ section). Written for review; delete after merging if unwanted.
   macOS; untested on Windows terminals — as is the rest of Caravan).
 - Web settings panel writes live to the same config the CLI reads;
   concurrent writes last-writer-wins (single-user tool, acceptable).
+
+### Field notes (post-phase-2, from real NanoGPT usage)
+- NanoGPT subscription accounts get HTTP 403 `paid_api_disabled` when a
+  request activates their server-side web-search add-on (e.g. `:online`
+  model suffixes). Caravan's own web tools are local and unaffected —
+  verified empirically: plain models + our tool schemas are accepted.
+  Worth a doctor hint if more aggregators grow similar add-on gates.
+- Observability gap: provider/tool exceptions surface to the user but are
+  NOT written to the JSONL transcript (only successful events are).
+  Trace should gain an Error event emitted from the REPL/agent catch
+  sites so failed sessions are auditable too.

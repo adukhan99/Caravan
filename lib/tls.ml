@@ -29,9 +29,12 @@ let https_handler uri raw_sock =
   let ssl_ctx = Ssl.create_context Ssl.TLSv1_2 Ssl.Client_context in
   if insecure_requested () then warn_insecure ()
   else begin
-    (* Trust the system CA store and require a valid chain. *)
+    (* Trust the system CA store and require a valid chain. The callback
+       stays [None]: [Verify_peer] alone enforces verification, while
+       [Ssl.client_verify_callback] would noisily print the certificate
+       chain to stdout on every connection. *)
     ignore (Ssl.set_default_verify_paths ssl_ctx);
-    Ssl.set_verify ssl_ctx [Ssl.Verify_peer] (Some Ssl.client_verify_callback)
+    Ssl.set_verify ssl_ctx [Ssl.Verify_peer] None
   end;
   (* cohttp-eio hands us a generic stream socket; eio-ssl needs the unix
      flavour. The coercion is safe on every platform Caravan targets

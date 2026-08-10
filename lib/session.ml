@@ -280,12 +280,17 @@ let rec run_conversations_stream ?max_turns ?on_turn net clock sess ~on_token =
   let result_with_meta =
     Eio.Switch.run (fun sw ->
       let promise, resolver = Eio.Promise.create () in
-      Ui.run_spinner_until_promise sw clock verb enabled promise;
+      let spinner_stopped = Ui.run_spinner_until_promise sw clock verb enabled promise in
       let first_token = ref true in
       let wrapped_on_token token =
         if !first_token then begin
           first_token := false;
           Eio.Promise.resolve resolver ();
+          (* Wait for the spinner to erase itself before any output —
+             otherwise its erase wipes the first streamed tokens. *)
+          (match spinner_stopped with
+           | Some stopped -> Eio.Promise.await stopped
+           | None -> ());
           Trace.emit Trace.Stream_start
         end;
         on_token token

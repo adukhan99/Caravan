@@ -1424,7 +1424,7 @@ let%test_unit "doctor_run_checks_unknown_provider" =
   let has_fail = List.exists (fun (c : Doctor.check) -> c.severity = Doctor.Fail) checks in
   assert has_fail
 
-let%test_unit "wire_json_escapes_control_characters" =
+let%test_unit "chat_message_to_wire_json_preserves_content" =
   (* Args are now expected to be pre-sanitized via sanitize_json_args at
      provider ingestion time.  Simulate that: *)
   let raw_args = "{\"path\": \"/tmp/test.f90\", \"content\": \"line1\\nline2\\r\\ntab:\\t\"}" in
@@ -1436,7 +1436,7 @@ let%test_unit "wire_json_escapes_control_characters" =
   (* Must parse as valid JSON without throwing parser errors *)
   let parsed = Yojson.Safe.from_string json_str in
   assert (parsed <> `Null);
-  (* Content is escaped properly *)
+  (* Content is preserved correctly without being mangled by manual escaping *)
   let open Yojson.Safe.Util in
   let content = wire |> member "content" |> to_string in
   assert (content = "Here is code:\nline1\nline2")

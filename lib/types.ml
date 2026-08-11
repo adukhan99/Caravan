@@ -61,37 +61,16 @@ let assistant_tool_msg ~tool_calls content =
 
 let tool_msg call_id content = make_message (Tool call_id) content
 
-(** Escape raw control characters in a plain-text string so the result is
-    safe to embed inside a JSON string literal.  Used for [content] fields
-    that are free-form text, NOT for [args] which are already JSON. *)
-let escape_control_chars s =
-  let buf = Buffer.create (String.length s) in
-  String.iter (fun c ->
-    match c with
-    | '\n' -> Buffer.add_string buf "\\n"
-    | '\r' -> Buffer.add_string buf "\\r"
-    | '\t' -> Buffer.add_string buf "\\t"
-    | '\b' -> Buffer.add_string buf "\\b"
-    | '\012' -> Buffer.add_string buf "\\f"
-    | c when Char.code c < 32 ->
-      Buffer.add_string buf (Printf.sprintf "\\u%04x" (Char.code c))
-    | c -> Buffer.add_char buf c
-  ) s;
-  Buffer.contents buf
-
 (** Sanitize a JSON-as-string value by round-tripping it through Yojson.
     This normalises any raw control characters the LLM may have emitted
     into proper JSON escapes, without double-escaping already-escaped
-    content.  Falls back to [escape_control_chars] if the string is not
-    valid JSON (defensive — shouldn't happen in practice). *)
+    content.  Returns the raw string unmodified if it is invalid JSON,
+    as Yojson's serializer will safely escape it when wrapped in `String. *)
 let sanitize_json_args s =
   try
     let json = Yojson.Safe.from_string s in
     Yojson.Safe.to_string json
-  with Yojson.Json_error _ ->
-    (* The string isn't valid JSON — likely contains raw control chars that
-       prevent parsing.  Pre-escape them so it can at least be embedded. *)
-    escape_control_chars s
+  with Yojson.Json_error _ -> s
 
 let tool_call_to_json tc =
   let fields = [
@@ -208,7 +187,7 @@ let messages_to_json msgs =
 let chat_message_to_wire_json msg =
   let base = [
     ("role",    `String (match msg.role with Tool _ -> "tool" | r -> role_to_string r));
-    ("content", if msg.content = "" && msg.tool_calls <> None then `Null else `String (escape_control_chars msg.content));
+    ("content", if msg.content = "" && msg.tool_calls <> None then `Null else `String msg.content);
   ] in
   let base = match msg.tool_calls with
     | Some tcs -> ("tool_calls", `List (List.map tool_call_to_json tcs)) :: base

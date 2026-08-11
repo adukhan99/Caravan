@@ -1439,7 +1439,7 @@ let%test_unit "wire_json_escapes_control_characters" =
   (* Content is escaped properly *)
   let open Yojson.Safe.Util in
   let content = wire |> member "content" |> to_string in
-  assert (not (String.contains content '\n'))
+  assert (content = "Here is code:\nline1\nline2")
 
 let%test_unit "sanitize_json_args_normalises_escaping" =
   (* Round-trip preserves semantics: raw control chars are normalised *)
@@ -1455,10 +1455,10 @@ let%test_unit "sanitize_json_args_normalises_escaping" =
   let clean = {|{"key": "value"}|} in
   let sanitized_clean = Types.sanitize_json_args clean in
   assert (Yojson.Safe.from_string sanitized_clean = Yojson.Safe.from_string clean);
-  (* Garbage falls back to escape_control_chars *)
+  (* Garbage falls back to returning the exact string *)
   let garbage = "not { json at all\n" in
   let sanitized_garbage = Types.sanitize_json_args garbage in
-  assert (not (String.contains sanitized_garbage '\n'))
+  assert (sanitized_garbage = garbage)
 
 let%test_unit "subagent_trace_events_and_spinner_suppression" =
   Eio_main.run (fun env ->

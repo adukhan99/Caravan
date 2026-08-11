@@ -61,13 +61,28 @@ let assistant_tool_msg ~tool_calls content =
 
 let tool_msg call_id content = make_message (Tool call_id) content
 
+let escape_control_chars s =
+  let buf = Buffer.create (String.length s) in
+  String.iter (fun c ->
+    match c with
+    | '\n' -> Buffer.add_string buf "\\n"
+    | '\r' -> Buffer.add_string buf "\\r"
+    | '\t' -> Buffer.add_string buf "\\t"
+    | '\b' -> Buffer.add_string buf "\\b"
+    | '\012' -> Buffer.add_string buf "\\f"
+    | c when Char.code c < 32 ->
+      Buffer.add_string buf (Printf.sprintf "\\u%04x" (Char.code c))
+    | c -> Buffer.add_char buf c
+  ) s;
+  Buffer.contents buf
+
 let tool_call_to_json tc =
   let fields = [
     ("id", `String tc.id);
     ("type", `String "function");
     ("function", `Assoc [
       ("name", `String tc.name);
-      ("arguments", `String tc.args);
+      ("arguments", `String (escape_control_chars tc.args));
     ]);
   ] in
   match tc.extra_content with
@@ -176,7 +191,7 @@ let messages_to_json msgs =
 let chat_message_to_wire_json msg =
   let base = [
     ("role",    `String (match msg.role with Tool _ -> "tool" | r -> role_to_string r));
-    ("content", if msg.content = "" && msg.tool_calls <> None then `Null else `String msg.content);
+    ("content", if msg.content = "" && msg.tool_calls <> None then `Null else `String (escape_control_chars msg.content));
   ] in
   let base = match msg.tool_calls with
     | Some tcs -> ("tool_calls", `List (List.map tool_call_to_json tcs)) :: base

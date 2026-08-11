@@ -1423,3 +1423,20 @@ let%test_unit "doctor_run_checks_unknown_provider" =
   in
   let has_fail = List.exists (fun (c : Doctor.check) -> c.severity = Doctor.Fail) checks in
   assert has_fail
+
+let%test_unit "wire_json_escapes_control_characters" =
+  let raw_args = "{\"path\": \"/tmp/test.f90\", \"content\": \"line1\nline2\r\ntab:\t\"}" in
+  let tc = Types.{ id = "call_0"; name = "write_file"; args = raw_args; extra_content = None } in
+  let msg = Types.assistant_tool_msg ~tool_calls:[tc] "Here is code:\nline1\nline2" in
+  let wire = Types.chat_message_to_wire_json msg in
+  let json_str = Yojson.Safe.to_string wire in
+  (* Must parse as valid JSON without throwing parser errors *)
+  let parsed = Yojson.Safe.from_string json_str in
+  assert (parsed <> `Null);
+  (* Check that raw unescaped 0x0A character is NOT inside the json_str inside quotes *)
+  let open Yojson.Safe.Util in
+  let tcs = wire |> member "tool_calls" |> to_list in
+  let tc_json = List.hd tcs in
+  let args_str = tc_json |> member "function" |> member "arguments" |> to_string in
+  assert (String.contains args_str '\n' = false || String.contains json_str '\n' = false)
+

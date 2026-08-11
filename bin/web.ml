@@ -385,6 +385,9 @@ let with_captured_tools f =
     | Trace.Tool_call_start { name; args } ->
       let preview = if String.length args > 80 then String.sub args 0 80 ^ "…" else args in
       captured := Printf.sprintf "%s %s" name preview :: !captured
+    | Trace.Subagent_start { name; task } ->
+      let preview = if String.length task > 80 then String.sub task 0 80 ^ "…" else task in
+      captured := Printf.sprintf "subagent %s: %s" name preview :: !captured
     | _ -> ()
   in
   let result = Trace.with_sink sink f in

@@ -23,6 +23,8 @@ type event =
   | Agent_turn       of { current : int; max : int }
   | Nudge            of { content : string }
   | Log              of { level : string; message : string }
+  | Subagent_start   of { name : string; task : string }
+  | Subagent_end     of { name : string; summary : string }
 
 type sink = event -> unit
 
@@ -70,6 +72,10 @@ let event_to_json ev : Yojson.Safe.t =
   | Nudge { content } -> base "nudge" [("content", `String content)]
   | Log { level; message } ->
     base "log" [("level", `String level); ("message", `String message)]
+  | Subagent_start { name; task } ->
+    base "subagent_start" [("name", `String name); ("task", `String task)]
+  | Subagent_end { name; summary } ->
+    base "subagent_end" [("name", `String name); ("summary", `String summary)]
 
 (** A sink that appends one JSON object per event to [oc], flushing eagerly
     so transcripts survive crashes. *)

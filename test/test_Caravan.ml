@@ -1440,3 +1440,41 @@ let%test_unit "wire_json_escapes_control_characters" =
   let args_str = tc_json |> member "function" |> member "arguments" |> to_string in
   assert (String.contains args_str '\n' = false || String.contains json_str '\n' = false)
 
+let%test_unit "subagent_trace_events_and_spinner_suppression" =
+  Eio_main.run (fun env ->
+    let events = ref [] in
+    let sink ev = events := ev :: !events in
+    Trace.with_sink sink (fun () ->
+      let module MockProvider : Provider.PROVIDER with type config = unit = struct
+        type config = unit
+        let name = "mock"
+        let complete _net _cfg ?model:_ ?options:_ ?tools:_ _msgs =
+          let finish_tc = Types.{ id = "c1"; name = "finish"; args = {|{"summary":"Done"}|}; extra_content = None } in
+          let reply = Types.assistant_tool_msg ~tool_calls:[finish_tc] "Done" in
+          Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+        let stream _net _cfg ?model ?options ?tools msgs ~on_token:_ =
+          complete _net _cfg ?model ?options ?tools msgs
+        let list_models _net _cfg = ["mock"]
+      end in
+      let provider = Provider.Provider ((module MockProvider), ()) in
+      let finish_tool = Tool.Tool (module CaravanTools.Finish.Finish) in
+      let spec : Subagent.subagent_spec = {
+        name = "tracer_subagent";
+        role = "worker";
+        system_prompt = "Do task";
+        tools = [finish_tool];
+        provider = Some provider;
+        model = Some "mock";
+      } in
+      let parent_sess = Session.create ~tools:[] "parent" provider in
+      let child_sess = Subagent.make_child_session parent_sess spec in
+      assert ((Session.config child_sess).model = "mock");
+      
+      let _res = Subagent.delegate env#net env#clock parent_sess spec "Test task" in
+      let sub_starts = List.filter (function Trace.Subagent_start _ -> true | _ -> false) !events in
+      let sub_ends   = List.filter (function Trace.Subagent_end _ -> true | _ -> false) !events in
+      assert (List.length sub_starts = 1);
+      assert (List.length sub_ends = 1)
+    )
+  )
+

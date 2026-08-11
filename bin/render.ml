@@ -53,6 +53,16 @@ let render opts ev =
      | "warn" | "warning" -> println (Ui.yellow ("  " ^ message))
      | "debug" -> ()  (* transcript-only *)
      | _ -> if not opts.quiet then println (Ui.dim ("  " ^ message)))
+  | Subagent_start { name; task } ->
+    if not opts.quiet then
+      let task_preview = Ui.truncate_visible (String.trim task) 60 in
+      println (Printf.sprintf "  %s %s %s"
+                 (Ui.cyan "↳ [subagent:") (Ui.bold name) (Ui.dim (Printf.sprintf "] task: %s" task_preview)))
+  | Subagent_end { name; summary } ->
+    if not opts.quiet then
+      let sum_preview = Ui.truncate_visible (String.trim summary) 60 in
+      println (Printf.sprintf "  %s %s %s"
+                 (Ui.dim "  ⎿ [subagent:") (Ui.dim name) (Ui.dim (Printf.sprintf "] complete: %s" sum_preview)))
 
 (** Install the renderer; returns unit. Options are read through a ref so
     the REPL can flip streaming/quiet at runtime without reinstalling. *)

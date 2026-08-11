@@ -34,11 +34,17 @@ let make_child_session parent_sess spec =
   in
   let full_system = spec.system_prompt ^ compaction_suffix in
   let sess = Session.create ~tools:spec.tools model provider in
+  let sess = Session.with_spinner_config { enabled = false; get_verb = (fun _ -> "") } sess in
   Session.set_system sess full_system
 
 let delegate net clock parent_sess spec task =
+  Trace.emit (Trace.Subagent_start { name = spec.name; task });
   let child_sess = make_child_session parent_sess spec in
-  Agent.run net clock child_sess task
+  let res = Agent.run net clock child_sess task in
+  (match res with
+   | Ok (_, result) -> Trace.emit (Trace.Subagent_end { name = spec.name; summary = result.value.content })
+   | Error err      -> Trace.emit (Trace.Subagent_end { name = spec.name; summary = "Error: " ^ err }));
+  res
 
 let delegate_parallel net clock parent_sess tasks =
   Eio.Fiber.List.map (fun (spec, task) ->

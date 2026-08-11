@@ -1478,3 +1478,15 @@ let%test_unit "subagent_trace_events_and_spinner_suppression" =
     )
   )
 
+let%test_unit "permissive_json_backticks" =
+  (* 1. JSON containing backticks inside string literal *)
+  let json_with_backtick = "{\"command\": \"echo `date`\"}" in
+  (match Parser.permissive_json json_with_backtick with
+   | Ok (`Assoc [("command", `String "echo `date`")]) -> ()
+   | _ -> failwith "Failed to parse JSON containing backticks");
+
+  (* 2. Tool execution with backticks in arguments *)
+  let tool = Tool.Tool (module CaravanTools.Bash.Bash) in
+  let res = Tool.dispatch tool "{\"command\": \"echo '`hello`'\"}" in
+  assert (String.contains res '`')
+

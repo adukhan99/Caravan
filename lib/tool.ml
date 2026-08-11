@@ -33,15 +33,14 @@ let find_tool (tools : packed_tool list) (name : string) : packed_tool option =
   | None -> List.find_opt (fun t -> List.mem name (aliases_of_packed t)) tools
 
 let execute_packed (Tool (module T)) (args_json : string) : string =
-  let cleaned_args = Parser.extract_code args_json |> Result.value ~default:args_json in
-  match Yojson.Safe.from_string (String.trim cleaned_args) with
-  | exception _ ->
+  match Parser.permissive_json args_json with
+  | Error _ ->
     Printf.sprintf
       "Error: could not parse tool arguments as JSON.\n\
        Received: %s.\n\
        Expected JSON matching schema: %s"
       args_json (Yojson.Safe.to_string (T.json_schema ()))
-  | json ->
+  | Ok json ->
     match T.parse_args json with
     | Error err ->
       Printf.sprintf

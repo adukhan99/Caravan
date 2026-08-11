@@ -125,6 +125,7 @@ let float_val : float t = fun s ->
 
 (** Strips markdown code fences from the response. *)
 let extract_code ?lang : string t = fun s ->
+  let s_trim = String.trim s in
   let open Re in
   let lang_pat = match lang with
     | None   -> rep (compl [char '\n'])
@@ -134,24 +135,14 @@ let extract_code ?lang : string t = fun s ->
     compile (seq [
       str "```";
       lang_pat;
-      char '\n';
+      opt (char '\n');
       group (rep any);
       str "```";
     ]) 
   in
-  match exec_opt re s with
+  match exec_opt re s_trim with
   | Some m -> return (String.trim (Group.get m 1)) s
-  | None   ->
-    let re2 = 
-      compile (seq [
-        char '`';
-        group (rep1 (compl [char '`']));
-        char '`';
-      ]) 
-    in
-    (match exec_opt re2 s with
-     | Some m -> return (Group.get m 1) s
-     | None   -> return (String.trim s) s)
+  | None   -> return s_trim s
 
 let first_line : string t =
   let%bind lines = list in

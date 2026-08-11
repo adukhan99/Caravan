@@ -1531,4 +1531,28 @@ let%test_unit "delegate_batch_parallel_execution" =
     assert (Re.execp (Re.compile (Re.str "Finished Task B")) output)
   )
 
+let%test_unit "config_spinner_verbose_and_ui_formatting" =
+  let tmp_config = "test_verbose_config.toml" in
+  let oc = open_out tmp_config in
+  output_string oc {|
+verbose = true
+|};
+  close_out oc;
+  Unix.putenv "CARAVAN_CONFIG" tmp_config;
+  let is_v1 = Config.get_spinner_verbose () in
+  Sys.remove tmp_config;
+  Unix.putenv "CARAVAN_CONFIG" "";
+  assert (is_v1 = true);
+
+  let call_normal = Ui.format_tool_call ~verbose:false ~name:"read_file" ~args:{|{"path": "lib/ui.ml"}|} () in
+  let call_verbose = Ui.format_tool_call ~verbose:true ~name:"read_file" ~args:{|{"path": "lib/ui.ml"}|} () in
+  assert (String.contains call_normal '(');
+  assert (String.contains call_verbose '(');
+
+  let output = "line 1\nline 2\nline 3" in
+  let res_normal = Ui.format_tool_result ~verbose:false ~output ~duration:1.2 () in
+  let res_verbose = Ui.format_tool_result ~verbose:true ~output ~duration:1.2 () in
+  assert (Re.execp (Re.compile (Re.str "(+2 lines)")) res_normal);
+  assert (Re.execp (Re.compile (Re.str "line 3")) res_verbose)
+
 

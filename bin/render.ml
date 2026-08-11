@@ -9,6 +9,7 @@ open Caravan
 type opts = {
   streaming : bool;   (** tokens already echoed — don't reprint content *)
   quiet     : bool;   (** suppress everything except errors and finish *)
+  verbose   : bool;   (** full tool call arguments, results, and debug logs *)
 }
 
 let println = Ui.println_ansi
@@ -16,11 +17,13 @@ let println = Ui.println_ansi
 let render opts ev =
   let open Trace in
   match ev with
-  | Model_call_start _ -> ()
+  | Model_call_start { model; provider } ->
+    if opts.verbose && not opts.quiet then
+      println (Ui.dim (Printf.sprintf "  [model] calling %s on %s…" model provider))
   | Tool_call_start { name; args } ->
-    if not opts.quiet then println (Ui.format_tool_call ~name ~args)
+    if not opts.quiet then println (Ui.format_tool_call ~verbose:opts.verbose ~name ~args ())
   | Tool_call_end { name = _; output; duration } ->
-    if not opts.quiet then println (Ui.format_tool_result ~output ~duration)
+    if not opts.quiet then println (Ui.format_tool_result ~verbose:opts.verbose ~output ~duration ())
   | Tool_not_found { name } ->
     println (Ui.red (Printf.sprintf "  ✗ tool '%s' not found" name))
   | Permission_denied { name } ->
@@ -51,16 +54,16 @@ let render opts ev =
     (match level with
      | "error" -> println (Ui.red ("  " ^ message))
      | "warn" | "warning" -> println (Ui.yellow ("  " ^ message))
-     | "debug" -> ()  (* transcript-only *)
+     | "debug" -> if opts.verbose && not opts.quiet then println (Ui.dim ("  [debug] " ^ message))
      | _ -> if not opts.quiet then println (Ui.dim ("  " ^ message)))
   | Subagent_start { name; task } ->
     if not opts.quiet then
-      let task_preview = Ui.truncate_visible (String.trim task) 60 in
+      let task_preview = if opts.verbose then String.trim task else Ui.truncate_visible (String.trim task) 60 in
       println (Printf.sprintf "  %s %s %s"
                  (Ui.cyan "↳ [subagent:") (Ui.bold name) (Ui.dim (Printf.sprintf "] task: %s" task_preview)))
   | Subagent_end { name; summary } ->
     if not opts.quiet then
-      let sum_preview = Ui.truncate_visible (String.trim summary) 60 in
+      let sum_preview = if opts.verbose then String.trim summary else Ui.truncate_visible (String.trim summary) 60 in
       println (Printf.sprintf "  %s %s %s"
                  (Ui.dim "  ⎿ [subagent:") (Ui.dim name) (Ui.dim (Printf.sprintf "] complete: %s" sum_preview)))
 

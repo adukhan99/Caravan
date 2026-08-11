@@ -35,19 +35,20 @@ let init_mcp () =
 
 (* ── Front-end plumbing: renderer, transcript, permissions ────────────── *)
 
-let render_opts = ref Render.{ streaming = true; quiet = false }
+let render_opts = ref Render.{ streaming = true; quiet = false; verbose = false }
 let renderer_installed = ref false
 
 let permission_mode = ref (Config.get_permission_mode ())
 
 (** Install the trace renderer and (if enabled) the JSONL transcript sink.
     Returns the transcript path when one was opened. *)
-let setup_frontend ?(quiet = false) () =
+let setup_frontend ?(quiet = false) ?(verbose = false) () =
   if not !renderer_installed then begin
     Render.install render_opts;
     renderer_installed := true
   end;
-  render_opts := Render.{ streaming = Config.get_stream (); quiet };
+  let is_verbose = verbose || Config.get_spinner_verbose () in
+  render_opts := Render.{ streaming = Config.get_stream (); quiet; verbose = is_verbose };
   permission_mode := Config.get_permission_mode ();
   if Config.get_transcript_enabled () then
     (try Some (Trace.open_transcript ~dir:(Config.log_dir ()))
@@ -489,6 +490,8 @@ let handle_slash_command net clock st line =
           println_ansi (dim "  Applies to new sessions — use /provider or /model to switch live.")
         | "permissions" ->
           permission_mode := Config.get_permission_mode ()
+        | "verbose" | "spinner.verbose" ->
+          render_opts := { !render_opts with Render.verbose = Config.get_spinner_verbose () }
         | _ -> ())
      | Error e -> println_ansi (red (Printf.sprintf "  ✗ %s" e)))
 
@@ -543,6 +546,7 @@ let handle_slash_command net clock st line =
       | Some s -> Printf.sprintf "%s…" (truncate_visible s 40)
       | None -> "(none)");
     p "Streaming" (string_of_bool (Config.get_stream ()));
+    p "Verbose" (string_of_bool (Config.get_spinner_verbose ()));
     p "Transcript" (if Config.get_transcript_enabled ()
                     then Config.log_dir () else "disabled");
     println_ansi (bold (dim "  Generation options:"));
@@ -716,11 +720,15 @@ let system_arg =
   let default = Config.get_string "system" in
   Arg.(value & opt (some string) default & info ["s"; "system"] ~docv:"PROMPT" ~doc)
 
+let verbose_arg =
+  let doc = "Show verbose tool call details and trace output." in
+  Arg.(value & flag & info ["v"; "verbose"] ~doc)
+
 (* ── repl command ─────────────────────────────────────────────────────── *)
 
-let run_repl model_cli provider_cli base_url_cli system =
+let run_repl model_cli provider_cli base_url_cli system verbose =
   init_mcp ();
-  let transcript = setup_frontend () in
+  let transcript = setup_frontend ~verbose () in
   let (provider_name, model, base_url) =
     resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
   in
@@ -759,14 +767,14 @@ let run_repl model_cli provider_cli base_url_cli system =
 let repl_cmd =
   let doc = "Start an interactive chat session (default command)." in
   let info = Cmd.info "repl" ~doc in
-  Cmd.v info Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg)
+  Cmd.v info Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg $ verbose_arg)
 
 (* ── agent command (one-shot autonomy) ────────────────────────────────── *)
 
-let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_out task =
+let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_out verbose task =
   init_mcp ();
   let quiet = quiet || json_out in
-  let transcript = setup_frontend ~quiet () in
+  let transcript = setup_frontend ~quiet ~verbose () in
   let (provider_name, model, base_url) =
     resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
   in
@@ -842,7 +850,7 @@ let agent_cmd =
   ] in
   let info = Cmd.info "agent" ~doc ~man in
   Cmd.v info Term.(const run_agent $ model_arg $ provider_arg $ base_url_arg
-                   $ system_arg $ max_turns_arg $ quiet_arg $ json_arg $ task_arg)
+                   $ system_arg $ max_turns_arg $ quiet_arg $ json_arg $ verbose_arg $ task_arg)
 
 (* Alias: caravan run "<task>" *)
 let run_cmd =
@@ -858,13 +866,13 @@ let run_cmd =
   let json_arg = Arg.(value & flag & info ["json"] ~doc:"Emit JSON outcome.") in
   let info = Cmd.info "run" ~doc:"Alias of $(b,caravan agent)." in
   Cmd.v info Term.(const run_agent $ model_arg $ provider_arg $ base_url_arg
-                   $ system_arg $ max_turns_arg $ quiet_arg $ json_arg $ task_arg)
+                   $ system_arg $ max_turns_arg $ quiet_arg $ json_arg $ verbose_arg $ task_arg)
 
 (* ── complete command ─────────────────────────────────────────────────── *)
 
-let run_complete model_cli provider_cli base_url_cli system prompt_text =
+let run_complete model_cli provider_cli base_url_cli system verbose prompt_text =
   init_mcp ();
-  let _transcript = setup_frontend () in
+  let _transcript = setup_frontend ~verbose () in
   let (provider_name, model, base_url) =
     resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
   in
@@ -898,7 +906,7 @@ let complete_cmd =
   let doc = "Send a single prompt and print the response." in
   let info = Cmd.info "complete" ~doc in
   Cmd.v info Term.(const run_complete $ model_arg $ provider_arg $ base_url_arg
-                   $ system_arg $ prompt_arg)
+                   $ system_arg $ verbose_arg $ prompt_arg)
 
 (* ── models command ───────────────────────────────────────────────────── *)
 
@@ -1244,7 +1252,7 @@ let () =
     `P "caravan providers --ladder            # model suggestions by size";
   ] in
   let info = Cmd.info "caravan" ~doc ~man ~version:Version.v in
-  let default_cmd = Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg) in
+  let default_cmd = Term.(const run_repl $ model_arg $ provider_arg $ base_url_arg $ system_arg $ verbose_arg) in
   let cmd = Cmd.group ~default:default_cmd info
     [ repl_cmd; agent_cmd; run_cmd; complete_cmd; models_cmd; providers_cmd;
       init_cmd; doctor_cmd; config_cmd; web_cmd ]

@@ -327,24 +327,47 @@ let render_markdown (src : string) : string =
 
 (* ── Tool trace lines (Trace renderer helpers) ────────────────────────── *)
 
-let format_tool_call ~name ~args =
-  let args_preview = truncate_visible (String.trim args) 60 in
-  Printf.sprintf "%s %s%s%s%s"
-    (magenta "⏺") (bold name) (dim "(") (dim args_preview) (dim ")")
+let format_tool_call ?(verbose = false) ~name ~args () =
+  let trimmed = String.trim args in
+  if not verbose then
+    let args_preview = truncate_visible trimmed 60 in
+    Printf.sprintf "%s %s%s%s%s"
+      (magenta "⏺") (bold name) (dim "(") (dim args_preview) (dim ")")
+  else
+    if String.contains trimmed '\n' || String.length trimmed > 80 then
+      let formatted_args =
+        String.split_on_char '\n' trimmed
+        |> List.map (fun line -> "    " ^ dim line)
+        |> String.concat "\n"
+      in
+      Printf.sprintf "%s %s\n%s" (magenta "⏺") (bold name) formatted_args
+    else
+      Printf.sprintf "%s %s%s%s%s"
+        (magenta "⏺") (bold name) (dim "(") (dim trimmed) (dim ")")
 
-let format_tool_result ~output ~duration =
-  let first_line =
-    match String.index_opt output '\n' with
-    | Some i -> String.sub output 0 i
-    | None -> output
-  in
-  let preview = truncate_visible (String.trim first_line) 70 in
-  let extra_lines =
-    List.length (String.split_on_char '\n' output) - 1
-  in
-  let more = if extra_lines > 0 then dim (Printf.sprintf " (+%d lines)" extra_lines) else "" in
-  Printf.sprintf "  %s %s%s %s"
-    (dim "⎿") (dim preview) more (dim (Printf.sprintf "[%.1fs]" duration))
+let format_tool_result ?(verbose = false) ~output ~duration () =
+  let trimmed = String.trim output in
+  if not verbose then
+    let first_line =
+      match String.index_opt trimmed '\n' with
+      | Some i -> String.sub trimmed 0 i
+      | None -> trimmed
+    in
+    let preview = truncate_visible first_line 70 in
+    let extra_lines =
+      List.length (String.split_on_char '\n' trimmed) - 1
+    in
+    let more = if extra_lines > 0 then dim (Printf.sprintf " (+%d lines)" extra_lines) else "" in
+    Printf.sprintf "  %s %s%s %s"
+      (dim "⎿") (dim preview) more (dim (Printf.sprintf "[%.1fs]" duration))
+  else
+    let formatted_lines =
+      String.split_on_char '\n' trimmed
+      |> List.map (fun line -> "  " ^ dim "│ " ^ dim line)
+      |> String.concat "\n"
+    in
+    Printf.sprintf "  %s %s\n%s"
+      (dim "⎿") (dim (Printf.sprintf "[%.1fs]" duration)) formatted_lines
 
 (* ── Spinner ──────────────────────────────────────────────────────────── *)
 

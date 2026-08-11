@@ -402,7 +402,10 @@ let get_spinner_enabled () =
   get_bool_opt ~path:["spinner"] (Some "CARAVAN_SPINNER") "enabled" |> Option.value ~default:true
 
 let get_spinner_verbose () =
-  get_bool_opt ~path:["spinner"] (Some "CARAVAN_SPINNER_VERBOSE") "verbose" |> Option.value ~default:false
+  match get_bool_opt ~path:["spinner"] (Some "CARAVAN_SPINNER_VERBOSE") "verbose" with
+  | Some b -> b
+  | None ->
+    get_bool_opt (Some "CARAVAN_VERBOSE") "verbose" |> Option.value ~default:false
 
 (** Read the TOML [spinner.<tool>] key as a string or array of strings. *)
 let get_spinner_verbs tool_name =
@@ -557,6 +560,7 @@ let editable_keys : (string * string * string) list = [
   ("transcript",  "JSONL session logs",                 "true | false");
   ("strict_mode", "bash tool discipline",               "0 | 1 | 2");
   ("enable_subagents", "Offer the delegate tool when [[subagents]] exist", "true | false");
+  ("verbose",     "Verbose tool call & trace output",   "true | false");
 ]
 
 (** Field descriptors for the subagent creation UI — single source of truth

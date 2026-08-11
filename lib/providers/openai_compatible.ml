@@ -132,7 +132,7 @@ let parse_complete_response body_str provider_name model =
         let id = tc |> member "id" |> to_string_option |> Option.value ~default:"call_0" in
         let func = tc |> member "function" in
         let name = func |> member "name" |> to_string in
-        let args = func |> member "arguments" |> to_string in
+        let args = func |> member "arguments" |> to_string |> Caravan.Types.sanitize_json_args in
         let tc_ec =
           match tc |> member "extra_content" with
           | `Null -> None
@@ -198,9 +198,9 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
             else begin
               let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
               let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-              Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
-                { id; name; args = Buffer.contents abuf; extra_content = tc_ec }
-              ) sorted)
+               Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
+                 { id; name; args = Caravan.Types.sanitize_json_args (Buffer.contents abuf); extra_content = tc_ec }
+               ) sorted)
             end
           in
           let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
@@ -277,7 +277,7 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
         let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
         let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
         Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
-          { id; name; args = Buffer.contents abuf; extra_content = tc_ec }
+          { id; name; args = Caravan.Types.sanitize_json_args (Buffer.contents abuf); extra_content = tc_ec }
         ) sorted)
       end
     in

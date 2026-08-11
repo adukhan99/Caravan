@@ -61,6 +61,9 @@ let assistant_tool_msg ~tool_calls content =
 
 let tool_msg call_id content = make_message (Tool call_id) content
 
+(** Escape raw control characters in a plain-text string so the result is
+    safe to embed inside a JSON string literal.  Used for [content] fields
+    that are free-form text, NOT for [args] which are already JSON. *)
 let escape_control_chars s =
   let buf = Buffer.create (String.length s) in
   String.iter (fun c ->
@@ -76,13 +79,27 @@ let escape_control_chars s =
   ) s;
   Buffer.contents buf
 
+(** Sanitize a JSON-as-string value by round-tripping it through Yojson.
+    This normalises any raw control characters the LLM may have emitted
+    into proper JSON escapes, without double-escaping already-escaped
+    content.  Falls back to [escape_control_chars] if the string is not
+    valid JSON (defensive — shouldn't happen in practice). *)
+let sanitize_json_args s =
+  try
+    let json = Yojson.Safe.from_string s in
+    Yojson.Safe.to_string json
+  with Yojson.Json_error _ ->
+    (* The string isn't valid JSON — likely contains raw control chars that
+       prevent parsing.  Pre-escape them so it can at least be embedded. *)
+    escape_control_chars s
+
 let tool_call_to_json tc =
   let fields = [
     ("id", `String tc.id);
     ("type", `String "function");
     ("function", `Assoc [
       ("name", `String tc.name);
-      ("arguments", `String (escape_control_chars tc.args));
+      ("arguments", `String tc.args);
     ]);
   ] in
   match tc.extra_content with

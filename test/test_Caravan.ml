@@ -1425,20 +1425,40 @@ let%test_unit "doctor_run_checks_unknown_provider" =
   assert has_fail
 
 let%test_unit "wire_json_escapes_control_characters" =
-  let raw_args = "{\"path\": \"/tmp/test.f90\", \"content\": \"line1\nline2\r\ntab:\t\"}" in
-  let tc = Types.{ id = "call_0"; name = "write_file"; args = raw_args; extra_content = None } in
+  (* Args are now expected to be pre-sanitized via sanitize_json_args at
+     provider ingestion time.  Simulate that: *)
+  let raw_args = "{\"path\": \"/tmp/test.f90\", \"content\": \"line1\\nline2\\r\\ntab:\\t\"}" in
+  let sanitized_args = Types.sanitize_json_args raw_args in
+  let tc = Types.{ id = "call_0"; name = "write_file"; args = sanitized_args; extra_content = None } in
   let msg = Types.assistant_tool_msg ~tool_calls:[tc] "Here is code:\nline1\nline2" in
   let wire = Types.chat_message_to_wire_json msg in
   let json_str = Yojson.Safe.to_string wire in
   (* Must parse as valid JSON without throwing parser errors *)
   let parsed = Yojson.Safe.from_string json_str in
   assert (parsed <> `Null);
-  (* Check that raw unescaped 0x0A character is NOT inside the json_str inside quotes *)
+  (* Content is escaped properly *)
   let open Yojson.Safe.Util in
-  let tcs = wire |> member "tool_calls" |> to_list in
-  let tc_json = List.hd tcs in
-  let args_str = tc_json |> member "function" |> member "arguments" |> to_string in
-  assert (String.contains args_str '\n' = false || String.contains json_str '\n' = false)
+  let content = wire |> member "content" |> to_string in
+  assert (not (String.contains content '\n'))
+
+let%test_unit "sanitize_json_args_normalises_escaping" =
+  (* Round-trip preserves semantics: raw control chars are normalised *)
+  let with_newline = "{\"task\": \"line1\nline2\"}" in
+  let sanitized = Types.sanitize_json_args with_newline in
+  (* The sanitized string must be valid JSON *)
+  let reparsed = Yojson.Safe.from_string sanitized in
+  let open Yojson.Safe.Util in
+  let task_val = reparsed |> member "task" |> to_string in
+  (* Semantic content is preserved *)
+  assert (task_val = "line1\nline2");
+  (* Already-clean JSON round-trips semantically *)
+  let clean = {|{"key": "value"}|} in
+  let sanitized_clean = Types.sanitize_json_args clean in
+  assert (Yojson.Safe.from_string sanitized_clean = Yojson.Safe.from_string clean);
+  (* Garbage falls back to escape_control_chars *)
+  let garbage = "not { json at all\n" in
+  let sanitized_garbage = Types.sanitize_json_args garbage in
+  assert (not (String.contains sanitized_garbage '\n'))
 
 let%test_unit "subagent_trace_events_and_spinner_suppression" =
   Eio_main.run (fun env ->
@@ -1528,7 +1548,17 @@ let%test_unit "delegate_batch_parallel_execution" =
     assert (Re.execp (Re.compile (Re.str "[Subagent 'worker_a']")) output);
     assert (Re.execp (Re.compile (Re.str "[Subagent 'worker_b']")) output);
     assert (Re.execp (Re.compile (Re.str "Finished Task A")) output);
-    assert (Re.execp (Re.compile (Re.str "Finished Task B")) output)
+    assert (Re.execp (Re.compile (Re.str "Finished Task B")) output);
+
+    (* LLM mistake: stringified JSON array — should still work *)
+    let stringified_batch = {|{
+      "tasks": "[{\"subagent\": \"worker_a\", \"task\": \"Task A\"}, {\"subagent\": \"worker_b\", \"task\": \"Task B\"}]"
+    }|} in
+    let output_str = Tool.dispatch delegate_tool stringified_batch in
+    assert (Re.execp (Re.compile (Re.str "[Subagent 'worker_a']")) output_str);
+    assert (Re.execp (Re.compile (Re.str "[Subagent 'worker_b']")) output_str);
+    assert (Re.execp (Re.compile (Re.str "Finished Task A")) output_str);
+    assert (Re.execp (Re.compile (Re.str "Finished Task B")) output_str)
   )
 
 let%test_unit "config_spinner_verbose_and_ui_formatting" =

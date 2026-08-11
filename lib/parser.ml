@@ -161,6 +161,13 @@ let regex_capture ~pattern : string t = fun s ->
        try return (Group.get m 0) s
        with Not_found -> fail "No capture group in match" s)
 
+(** Permissive & Coercive Parsers *)
+
+let permissive_json : Yojson.Safe.t t = fun s ->
+  let cleaned = extract_code s |> Result.value ~default:s in
+  try return (Yojson.Safe.from_string (String.trim cleaned)) s
+  with Yojson.Json_error msg -> fail ("JSON parse error: " ^ msg) s
+
 let json_array_strings : string list t =
   let%bind items = json in
   match items with
@@ -169,13 +176,6 @@ let json_array_strings : string list t =
       | `String s -> Some s
       | _ -> None) l)
   | _ -> fail "Expected a JSON array"
-
-(** Permissive & Coercive Parsers *)
-
-let permissive_json : Yojson.Safe.t t = fun s ->
-  let cleaned = extract_code s |> Result.value ~default:s in
-  try return (Yojson.Safe.from_string (String.trim cleaned)) s
-  with Yojson.Json_error msg -> fail ("JSON parse error: " ^ msg) s
 
 let structured_value : Value.t t = fun s ->
   return (Value.of_string_permissive s) s

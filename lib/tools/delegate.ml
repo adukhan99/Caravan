@@ -117,13 +117,31 @@ module Delegate = struct
     let task     = json |> member "task"     |> to_string in
     { subagent; task }
 
+  (** Parse delegate arguments. Handles the standard cases:
+      - Single dispatch: {"subagent": "x", "task": "y"}
+      - Batch dispatch:  {"tasks": [{...}, {...}]}
+      Also recovers from the common LLM mistake of stringifying the tasks
+      array: {"tasks": "[{...}, {...}]"} *)
   let parse_args json =
     try
       let tasks_json = json |> member "tasks" in
-      if tasks_json <> `Null then
-        let items = tasks_json |> to_list |> List.map parse_item in
-        if items = [] then Error "delegate parse: 'tasks' array cannot be empty"
-        else Ok (Batch items)
+      (* Recover from LLMs that stringify the tasks array *)
+      let tasks_resolved =
+        match tasks_json with
+        | `String s ->
+          (try Yojson.Safe.from_string s with Yojson.Json_error _ -> tasks_json)
+        | other -> other
+      in
+      if tasks_resolved <> `Null then
+        match tasks_resolved with
+        | `List l ->
+          let items = l |> List.map parse_item in
+          if items = [] then Error "delegate parse: 'tasks' array cannot be empty"
+          else Ok (Batch items)
+        | _ ->
+          Error (Printf.sprintf
+            "delegate parse: Expected array, got %s"
+            (Yojson.Safe.to_string tasks_resolved))
       else
         let subagent = json |> member "subagent" |> to_string in
         let task     = json |> member "task"     |> to_string in

@@ -133,7 +133,7 @@ let history_for_llm sess =
      | rest -> sm :: rest)
 
 let execute_tool_calls _net clock sess tcs =
-  List.map (fun tc ->
+  Eio.Fiber.List.map (fun tc ->
     match Tool.find_tool sess.tools tc.name with
     | None ->
       let msg = Printf.sprintf "Tool '%s' not found in registered tools." tc.name in

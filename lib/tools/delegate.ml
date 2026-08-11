@@ -17,6 +17,7 @@
     before the first LLM call if anything is wrong. *)
 
 open Caravan.Tool
+open Caravan.Types
 open Yojson.Safe.Util
 
 (* ── Startup-time validation ──────────────────────────────────────────────── *)
@@ -48,16 +49,16 @@ let registry : (string, Caravan.Subagent.subagent_spec) Hashtbl.t = Hashtbl.crea
 
 module Delegate = struct
   let name    = "delegate"
-  let aliases = ["subagent"; "spawn_worker"; "offload"]
+  let aliases = ["subagent"; "spawn_worker"; "offload"; "delegate_batch"]
 
   (* NOTE: must stay a function — the registry is only populated by [make],
      which runs after this module is initialised. A plain [let] here would
      freeze the description as "(no subagents configured)" forever. *)
   let description_now () =
     let base =
-      "Delegate an atomic, well-specified task to a specialised local subagent. \
-       The subagent starts cold (no conversation history) and returns only a \
-       concise final result, saving orchestrator tokens. "
+      "Delegate one or more atomic, well-specified tasks to specialised local subagents in parallel. \
+       Subagents start cold (no conversation history) and return concise final results, saving orchestrator tokens. \
+       Pass a 'tasks' array of subagent/task pairs for parallel execution, or single 'subagent' and 'task'. "
     in
     if Hashtbl.length registry = 0 then base ^ "(no subagents configured)"
     else
@@ -70,34 +71,63 @@ module Delegate = struct
 
   let description = description_now ()
 
-  type input  = { subagent : string; task : string }
+  type task_item = { subagent : string; task : string }
+
+  type input  =
+    | Single of task_item
+    | Batch of task_item list
+
   type output = string
 
   let json_schema () =
     let enum_names = Hashtbl.fold (fun k _ acc -> `String k :: acc) registry [] in
+    let subagent_prop =
+      [ ("type",        `String "string");
+        ("description", `String "Name of the subagent to use.") ]
+      @ if enum_names <> [] then [("enum", `List enum_names)] else []
+    in
+    let task_prop =
+      [ ("type",        `String "string");
+        ("description", `String
+          "Complete, self-contained task description. Include ALL context \
+           needed — the subagent has no memory of prior turns."); ]
+    in
     `Assoc [
-      ("type",     `String "object");
-      ("required", `List [`String "subagent"; `String "task"]);
+      ("type", `String "object");
       ("properties", `Assoc [
-        ("subagent", `Assoc (
-          [ ("type",        `String "string");
-            ("description", `String "Name of the subagent to use.") ]
-          @ if enum_names <> [] then [("enum", `List enum_names)] else []
-        ));
-        ("task", `Assoc [
-          ("type",        `String "string");
-          ("description", `String
-            "Complete, self-contained task description. Include ALL context \
-             needed — the subagent has no memory of prior turns.");
+        ("subagent", `Assoc subagent_prop);
+        ("task",     `Assoc task_prop);
+        ("tasks", `Assoc [
+          ("type",        `String "array");
+          ("description", `String "List of subagent tasks to run concurrently in parallel.");
+          ("items", `Assoc [
+            ("type",     `String "object");
+            ("required", `List [`String "subagent"; `String "task"]);
+            ("properties", `Assoc [
+              ("subagent", `Assoc subagent_prop);
+              ("task",     `Assoc task_prop);
+            ]);
+          ]);
         ]);
       ]);
     ]
 
+  let parse_item json =
+    let subagent = json |> member "subagent" |> to_string in
+    let task     = json |> member "task"     |> to_string in
+    { subagent; task }
+
   let parse_args json =
     try
-      let subagent = json |> member "subagent" |> to_string in
-      let task     = json |> member "task"     |> to_string in
-      Ok { subagent; task }
+      let tasks_json = json |> member "tasks" in
+      if tasks_json <> `Null then
+        let items = tasks_json |> to_list |> List.map parse_item in
+        if items = [] then Error "delegate parse: 'tasks' array cannot be empty"
+        else Ok (Batch items)
+      else
+        let subagent = json |> member "subagent" |> to_string in
+        let task     = json |> member "task"     |> to_string in
+        Ok (Single { subagent; task })
     with Type_error (msg, _) -> Error ("delegate parse: " ^ msg)
 
   let format_output s = s
@@ -133,7 +163,7 @@ let make
     Hashtbl.replace registry spec.name spec
   ) subagent_specs;
   (* Construct a fresh packed_tool whose [execute] closes over [net] and [clock] *)
-  let dispatch (subagent : string) (task : string) : string =
+  let dispatch_single (subagent : string) (task : string) : (string, string) result =
     match Hashtbl.find_opt registry subagent with
     | None ->
       let available =
@@ -141,8 +171,8 @@ let make
         |> List.sort String.compare
         |> String.concat ", "
       in
-      Printf.sprintf "Error: unknown subagent '%s'. Available: %s" subagent available
-    | Some spec ->
+      Error (Printf.sprintf "Error: unknown subagent '%s'. Available: %s" subagent available)
+    | Some (spec : Caravan.Subagent.subagent_spec) ->
       let parent_provider =
         match spec.provider with
         | Some p -> p
@@ -153,25 +183,88 @@ let make
         | Some m -> m
         | None   -> spec.name
       in
-      (* Cold start — fresh session, no parent history *)
       let parent_sess = Caravan.Session.create model parent_provider in
       (match Caravan.Subagent.delegate net clock parent_sess spec task with
-       | Ok (_sess, result) -> result.value.content
-       | Error msg          -> Printf.sprintf "Subagent '%s' error: %s" subagent msg)
+       | Ok (_sess, result) -> Ok result.value.content
+       | Error msg          -> Error (Printf.sprintf "Subagent '%s' error: %s" subagent msg))
+  in
+
+  let dispatch_batch (items : Delegate.task_item list) : string =
+    match items with
+    | [] -> "Error: empty subagent task list"
+    | [{ subagent; task }] ->
+      (match dispatch_single subagent task with
+       | Ok res -> res
+       | Error err -> err)
+    | items ->
+      let specs_and_tasks =
+        List.map (fun ({ subagent; task } : Delegate.task_item) ->
+          match Hashtbl.find_opt registry subagent with
+          | Some spec -> Ok (spec, task)
+          | None -> Error subagent
+        ) items
+      in
+      let unknown =
+        List.filter_map (function Error s -> Some s | Ok _ -> None) specs_and_tasks
+      in
+      if unknown <> [] then
+        let available =
+          Hashtbl.fold (fun k _ a -> k :: a) registry []
+          |> List.sort String.compare
+          |> String.concat ", "
+        in
+        Printf.sprintf "Error: unknown subagent(s): %s. Available: %s"
+          (String.concat ", " unknown) available
+      else
+        let valid_items =
+          List.filter_map (function Ok pair -> Some pair | Error _ -> None) specs_and_tasks
+        in
+        let tasks_with_sessions =
+          List.map (fun ((spec : Caravan.Subagent.subagent_spec), task) ->
+            let parent_provider =
+              match spec.provider with
+              | Some p -> p
+              | None   -> failwith "delegate: subagent spec has no provider set"
+            in
+            let model =
+              match spec.model with
+              | Some m -> m
+              | None   -> spec.name
+            in
+            let parent_sess = Caravan.Session.create model parent_provider in
+            (spec, task, parent_sess)
+          ) valid_items
+        in
+        let results =
+          Eio.Fiber.List.map (fun ((spec : Caravan.Subagent.subagent_spec), task, parent_sess) ->
+            (spec.name, Caravan.Subagent.delegate net clock parent_sess spec task)
+          ) tasks_with_sessions
+        in
+        List.map (fun (name, res) ->
+          match res with
+          | Ok (_sess, result) -> Printf.sprintf "[Subagent '%s']:\n%s" name result.value.content
+          | Error msg          -> Printf.sprintf "[Subagent '%s'] Error: %s" name msg
+        ) results
+        |> String.concat "\n\n"
+  in
+
+  let dispatch (inp : Delegate.input) : string =
+    match inp with
+    | Single { subagent; task } ->
+      (match dispatch_single subagent task with
+       | Ok res -> res
+       | Error err -> err)
+    | Batch items -> dispatch_batch items
   in
   Tool (module struct
-    (* Re-export all Delegate members explicitly so [input] remains a concrete
-       record type — [include Delegate] would make it abstract via the TOOL sig. *)
     let name          = Delegate.name
     let aliases       = Delegate.aliases
-    (* Computed here, after the registry is populated, so the model sees
-       the actual subagent roster. *)
     let description   = Delegate.description_now ()
-    type input        = Delegate.input = { subagent : string; task : string }
+    type input        = Delegate.input = Single of Delegate.task_item | Batch of Delegate.task_item list
     type output       = string
     type _ Effect.t  += Exec : input -> output Effect.t
     let json_schema   = Delegate.json_schema
     let parse_args    = Delegate.parse_args
     let format_output = Delegate.format_output
-    let execute inp   = dispatch inp.subagent inp.task
+    let execute inp   = dispatch inp
   end)

@@ -1490,3 +1490,45 @@ let%test_unit "permissive_json_backticks" =
   let res = Tool.dispatch tool "{\"command\": \"echo '`hello`'\"}" in
   assert (String.contains res '`')
 
+let%test_unit "delegate_batch_parallel_execution" =
+  Eio_main.run (fun env ->
+    let module MockSubProvider : Provider.PROVIDER with type config = unit = struct
+      type config = unit
+      let name = "mock_sub"
+      let complete _net _cfg ?model:_ ?options:_ ?tools:_ msgs =
+        let prompt = (List.hd (List.rev msgs)).Types.content in
+        let finish_tc = Types.{ id = "c1"; name = "finish"; args = Printf.sprintf {|{"summary":"Finished %s"}|} prompt; extra_content = None } in
+        let reply = Types.assistant_tool_msg ~tool_calls:[finish_tc] "Done" in
+        Types.wrap_result ~raw_response:"mock" ~model:"mock" ~provider:"mock" reply
+      let stream _net _cfg ?model ?options ?tools msgs ~on_token:_ =
+        complete _net _cfg ?model ?options ?tools msgs
+      let list_models _net _cfg = ["mock"]
+    end in
+    let provider = Provider.Provider ((module MockSubProvider), ()) in
+    let finish_tool = Tool.Tool (module CaravanTools.Finish.Finish) in
+    let spec_a : Subagent.subagent_spec = {
+      name = "worker_a"; role = "worker"; system_prompt = "Work A";
+      tools = [finish_tool]; provider = Some provider; model = Some "mock";
+    } in
+    let spec_b : Subagent.subagent_spec = {
+      name = "worker_b"; role = "worker"; system_prompt = "Work B";
+      tools = [finish_tool]; provider = Some provider; model = Some "mock";
+    } in
+    let delegate_tool = CaravanTools.Delegate.make ~net:env#net ~clock:env#clock
+      ~registered_tools:[finish_tool] ~subagent_specs:[spec_a; spec_b] in
+    
+    (* Batch JSON payload *)
+    let batch_args = {|{
+      "tasks": [
+        {"subagent": "worker_a", "task": "Task A"},
+        {"subagent": "worker_b", "task": "Task B"}
+      ]
+    }|} in
+    let output = Tool.dispatch delegate_tool batch_args in
+    assert (Re.execp (Re.compile (Re.str "[Subagent 'worker_a']")) output);
+    assert (Re.execp (Re.compile (Re.str "[Subagent 'worker_b']")) output);
+    assert (Re.execp (Re.compile (Re.str "Finished Task A")) output);
+    assert (Re.execp (Re.compile (Re.str "Finished Task B")) output)
+  )
+
+

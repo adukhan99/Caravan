@@ -57,9 +57,18 @@ let setup_frontend ?(quiet = false) ?(verbose = false) () =
 
 (** Run [f] under the active tool-permission policy. *)
 let with_permissions f =
+  let is_mutating name =
+    match Tool.find_tool (all_tools ()) name with
+    | Some t -> Tool.is_mutating_packed t
+    | None -> true
+  in
+  let describe_action name args =
+    match Tool.find_tool (all_tools ()) name with
+    | Some t -> Tool.describe_action_packed t args
+    | None -> Printf.sprintf "Use tool '%s'" name
+  in
   Effects.run_with_effects
-    ~permission_policy:(fun name args ->
-      (Permission.policy_of_mode !permission_mode) name args)
+    ~permission_policy:(Permission.policy_of_mode ~is_mutating ~describe_action !permission_mode)
     f
 
 let on_token token =
@@ -472,7 +481,7 @@ let handle_slash_command net clock st line =
       println_ansi (rule ~title:"Tools" ());
       List.iter (fun p ->
         let name = Tool.name_of_packed p in
-        let mut = if Permission.is_mutating name then yellow "✎" else dim "·" in
+        let mut = if Tool.is_mutating_packed p then yellow "✎" else dim "·" in
         println_ansi (Printf.sprintf "  %s %s  %s"
           mut (cyan (Printf.sprintf "%-14s" name))
           (dim (truncate_visible (Tool.description_of_packed p) 60)))

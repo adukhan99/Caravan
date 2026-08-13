@@ -30,23 +30,22 @@ let check mode ~is_mutating ~desc =
   | Deny_all -> not is_mutating
   | Custom policy -> policy desc ""
 
-let legacy_mutating = ["bash"; "write_file"; "sed"; "touch"; "mkdir"; "delegate"]
-
-let check_by_name mode ~tool_name ~args =
-  let is_mutating = List.mem tool_name legacy_mutating in
-  let desc = Printf.sprintf "Use tool '%s'" tool_name in
-  check mode ~is_mutating ~desc
-
 let default_policy () = Always_allow
 
-(** Map a config-level mode string to a policy usable as
+(** Map a config-level mode string to a permission policy usable as
     [Effects.run_with_effects ~permission_policy]. *)
-let policy_of_mode mode : string -> string -> bool =
+let policy_of_mode
+    ?(is_mutating = fun _ -> true)
+    ?(describe_action = fun name _ -> Printf.sprintf "Use tool '%s'" name)
+    mode : string -> string -> bool =
   match String.lowercase_ascii mode with
   | "ask" ->
-    (fun name args -> check_by_name Ask_user ~tool_name:name ~args)
+    (fun name args ->
+       let is_mut = is_mutating name in
+       let desc = describe_action name args in
+       check Ask_user ~is_mutating:is_mut ~desc)
   | "readonly" | "read-only" | "ro" ->
-    (fun name args -> check_by_name Deny_all ~tool_name:name ~args)
+    (fun name _args ->
+       not (is_mutating name))
   | _ -> (fun _ _ -> true)
-
 

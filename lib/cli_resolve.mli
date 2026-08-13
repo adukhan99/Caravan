@@ -13,12 +13,14 @@ val resolve :
 
 val resolve_spec :
   default_model:(string -> string) ->
+  default_base_url:(string -> string) ->
   provider_cli:string option ->
   model_cli:string option ->
   base_url_cli:string option ->
   ?api_key_cli:string ->
   unit ->
   Provider.provider_spec
+
 
 
 

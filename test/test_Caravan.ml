@@ -789,15 +789,27 @@ let%test_unit "bash_tool_captures_stderr_and_exit_status" =
   assert (contains "[exit status")
 
 let%test_unit "permission_policy_modes" =
-  let ro = Permission.policy_of_mode "readonly" in
+  let all = CaravanTools.All_tools.all_tools in
+  let is_mutating name =
+    match Tool.find_tool all name with
+    | Some t -> Tool.is_mutating_packed t
+    | None -> true
+  in
+  let describe_action name args =
+    match Tool.find_tool all name with
+    | Some t -> Tool.describe_action_packed t args
+    | None -> Printf.sprintf "Use tool '%s'" name
+  in
+  let ro = Permission.policy_of_mode ~is_mutating ~describe_action "readonly" in
   assert (not (ro "bash" "{}"));
   assert (not (ro "write_file" "{}"));
   assert (ro "read_file" "{}");
   assert (ro "web_search" "{}");
-  let auto = Permission.policy_of_mode "auto" in
+  let auto = Permission.policy_of_mode ~is_mutating ~describe_action "auto" in
   assert (auto "bash" "{}");
   assert CaravanTools.Sed.Sed.is_mutating;
   assert (not CaravanTools.Grep.Grep.is_mutating)
+
 
 let%test_unit "registry_lookup_and_errors" =
   let open CaravanProviders.Registry in

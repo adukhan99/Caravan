@@ -43,24 +43,15 @@ let list_models_packed net (Provider ((module P), cfg)) =
 
 let name_of_packed (Provider ((module P), _)) = P.name
 
-type provider_spec =
-  | OpenAI of { base_url : string; model : string; api_key : string option }
-  | Ollama of { base_url : string; model : string }
-  | LlamaCpp of { base_url : string; model : string }
-  | Custom of { name : string; base_url : string; model : string; api_key : string option }
+type provider_spec = {
+  name : string;
+  base_url : string;
+  model : string;
+  api_key : string option;
+}
 
-let parse_spec ~provider_name ~model ~base_url ~api_key =
-  match String.lowercase_ascii (String.trim provider_name) with
-  | "openai" ->
-    let url = Option.value ~default:"https://api.openai.com/v1" base_url in
-    OpenAI { base_url = url; model; api_key }
-  | "ollama" ->
-    let url = Option.value ~default:"http://localhost:11434/v1" base_url in
-    Ollama { base_url = url; model }
-  | "llama_cpp" | "llamacpp" ->
-    let url = Option.value ~default:"http://localhost:8080/v1" base_url in
-    LlamaCpp { base_url = url; model }
-  | other ->
-    let url = Option.value ~default:"http://localhost:8080/v1" base_url in
-    Custom { name = other; base_url = url; model; api_key }
-
+let parse_spec ~provider_name ~model ~base_url ~default_base_url ~api_key =
+  { name = String.lowercase_ascii (String.trim provider_name);
+    base_url = Option.value ~default:default_base_url base_url;
+    model;
+    api_key }

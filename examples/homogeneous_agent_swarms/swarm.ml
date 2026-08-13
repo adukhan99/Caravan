@@ -194,6 +194,8 @@ let make_spawn_agent_tool ~net ~clock ~registered_tools_ref ~parent_provider ~pa
     let json_schema   = SpawnAgent.json_schema
     let parse_args    = SpawnAgent.parse_args
     let format_output = SpawnAgent.format_output
+    let is_mutating   = true
+    let describe_action (inp : input) = Printf.sprintf "Spawn subagent '%s': %s" (Option.value inp.role ~default:"subagent") inp.task
     let execute inp   = dispatch inp
   end)
 

@@ -361,14 +361,24 @@ let html_response () =
     ~status:`OK ~body:html_page ()
 
 (** Web permission policy: no interactive prompt is possible, so "ask"
-    degrades to deny-with-explanation rather than silently allowing. *)
-let web_permission_policy () =
-  let mode = Config.get_permission_mode () in
-  fun name _args ->
-    if not (Permission.is_mutating name) then true
-    else match mode with
-      | "auto" -> true
-      | _ -> false   (* ask | readonly: no prompt surface here *)
+    degrades to deny rather than silently allowing. *)
+let web_permission_policy tools () =
+  let is_mutating name =
+    match Tool.find_tool tools name with
+    | Some t -> Tool.is_mutating_packed t
+    | None -> true
+  in
+  let describe_action name args =
+    match Tool.find_tool tools name with
+    | Some t -> Tool.describe_action_packed t args
+    | None -> Printf.sprintf "Use tool '%s'" name
+  in
+  let mode = match Config.get_permission_mode () with
+    | "ask" -> "readonly"  (* no prompt surface in web UI *)
+    | m -> m
+  in
+  Permission.policy_of_mode ~is_mutating ~describe_action mode
+
 
 let record_usage st (result : _ Types.result_with_meta) =
   match result.usage with
@@ -397,7 +407,7 @@ let handle_message st net clock ~agent_mode text =
   let (outcome, tools) =
     with_captured_tools (fun () ->
       Effects.run_with_effects
-        ~permission_policy:(web_permission_policy ()) @@ fun () ->
+        ~permission_policy:(web_permission_policy (Session.tools st.session) ()) @@ fun () ->
       if agent_mode then
         match Agent.run net clock st.session text with
         | Ok (sess', result) ->

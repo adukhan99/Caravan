@@ -74,18 +74,18 @@ let execute_packed_typed (Tool (module T)) (args_json : string) : (string, dispa
   | Error _ ->
     Error (Invalid_json { raw = args_json; schema = T.json_schema () })
   | Ok json ->
-    match T.parse_args json with
-    | Error err ->
-      Error (Schema_mismatch { tool_name = T.name; details = err; schema = T.json_schema () })
-    | Ok input ->
-      try
-        let output =
-          try Effect.perform (T.Exec input)
-          with Effect.Unhandled _ -> T.execute input
-        in
-        Ok (T.format_output output)
-      with exn ->
-        Error (Execution_error (Printexc.to_string exn))
+    (match T.parse_args json with
+     | Error err ->
+       Error (Schema_mismatch { tool_name = T.name; details = err; schema = T.json_schema () })
+     | Ok input ->
+       try
+         let output =
+           try Effect.perform (T.Exec input)
+           with Effect.Unhandled _ -> T.execute input
+         in
+         Ok (T.format_output output)
+       with exn ->
+         Error (Execution_error (Printexc.to_string exn)))
 
 let execute_packed (Tool (module T) as tool) (args_json : string) : string =
   match execute_packed_typed tool args_json with

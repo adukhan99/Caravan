@@ -32,6 +32,9 @@ module Fetch : TOOL = struct
     | Error e -> Printf.sprintf "Fetch error: %s" e
     | Ok content -> content
 
+  let is_mutating = false
+  let describe_action input = Printf.sprintf "Fetch URL: %s" input.url
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let strip_html s =

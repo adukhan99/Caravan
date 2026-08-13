@@ -48,3 +48,13 @@ let resolve ~default_model ~provider_cli ~model_cli ~base_url_cli () =
         else None
   in
   (provider_name, model, base_url)
+
+let resolve_spec ~default_model ~provider_cli ~model_cli ~base_url_cli ?api_key_cli () =
+  let (provider_name, model, base_url) = resolve ~default_model ~provider_cli ~model_cli ~base_url_cli () in
+  let api_key =
+    match api_key_cli with
+    | Some _ as k -> k
+    | None -> Config.get_string_opt (Some "OPENAI_API_KEY") "api_key"
+  in
+  Provider.parse_spec ~provider_name ~model ~base_url ~api_key
+

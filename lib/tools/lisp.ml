@@ -57,6 +57,9 @@ module Lisp = struct
     | Ok s -> s
     | Error e -> "Error: " ^ e
 
+  let is_mutating = false
+  let describe_action input = Printf.sprintf "Execute Lisp: %s" input.program
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute { program; data } =

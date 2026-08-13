@@ -33,6 +33,9 @@ module Ls : TOOL with type input = string and type output = string = struct
 
   let format_output s = s
 
+  let is_mutating = false
+  let describe_action path = Printf.sprintf "List directory: %s" path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute path =

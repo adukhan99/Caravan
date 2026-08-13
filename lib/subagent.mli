@@ -19,6 +19,10 @@ type subagent_spec = {
   (** [Some m] specifies the target model name to run. [None] inherits. *)
 }
 
+(** Parse a list of tool names against a registered toolset into a list of [Tool.packed_tool]s.
+    Returns [Error msg] if any tool name is not found in [registered]. *)
+val resolve_tools : Tool.packed_tool list -> string list -> (Tool.packed_tool list, string) result
+
 val make_child_session : Session.t -> subagent_spec -> Session.t
 
 val delegate :

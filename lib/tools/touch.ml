@@ -26,6 +26,9 @@ module Touch : TOOL with type input = string and type output = (unit, string) re
 
   let format_output = function Ok () -> "File touched successfully." | Error e -> e
 
+  let is_mutating = true
+  let describe_action path = Printf.sprintf "Touch file: %s" path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute path =

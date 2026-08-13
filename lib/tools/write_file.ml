@@ -36,6 +36,9 @@ module Write_file : TOOL with type input = write_input and type output = (unit, 
 
   let format_output = function Ok () -> "File written successfully." | Error e -> e
 
+  let is_mutating = true
+  let describe_action input = Printf.sprintf "Write to file: %s" input.path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute { path; content } =

@@ -8,22 +8,7 @@ let session_override = ref None
 
 let reset_session_override () = session_override := None
 
-let ask_user_approval tool_name args =
-  let desc =
-    try
-      let json = Yojson.Safe.from_string args in
-      match tool_name with
-      | "bash" ->
-        (match Yojson.Safe.Util.member "command" json with
-         | `String cmd -> Printf.sprintf "Execute command: %s" cmd
-         | _ -> Printf.sprintf "Execute bash command")
-      | "write_file" ->
-        (match Yojson.Safe.Util.member "path" json with
-         | `String path -> Printf.sprintf "Write to file: %s" path
-         | _ -> Printf.sprintf "Write file")
-      | _ -> Printf.sprintf "Use tool '%s'" tool_name
-    with _ -> Printf.sprintf "Use tool '%s'" tool_name
-  in
+let ask_user_approval desc =
   Printf.printf "\n[Permission Request] %s\nApprove? [y]es / [n]o / [a]lways: %!" desc;
   match read_line () with
   | input ->
@@ -35,34 +20,33 @@ let ask_user_approval tool_name args =
       input' = "y" || input' = "yes"
   | exception _ -> false
 
-let check mode tool_name args =
+let check mode ~is_mutating ~desc =
   let effective_mode = match !session_override with Some m -> m | None -> mode in
   match effective_mode with
   | Always_allow -> true
-  | Ask_user -> ask_user_approval tool_name args
-  | Deny_all -> false
-  | Custom policy -> policy tool_name args
+  | Ask_user ->
+    if not is_mutating then true
+    else ask_user_approval desc
+  | Deny_all -> not is_mutating
+  | Custom policy -> policy desc ""
+
+let legacy_mutating = ["bash"; "write_file"; "sed"; "touch"; "mkdir"; "delegate"]
+
+let check_by_name mode ~tool_name ~args =
+  let is_mutating = List.mem tool_name legacy_mutating in
+  let desc = Printf.sprintf "Use tool '%s'" tool_name in
+  check mode ~is_mutating ~desc
 
 let default_policy () = Always_allow
 
-(** Tools that can change state outside the conversation. Everything else
-    (reads, searches, pure computations) is always allowed. *)
-let mutating_tools =
-  ["bash"; "write_file"; "sed"; "touch"; "mkdir"; "delegate"]
-
-let is_mutating tool_name = List.mem tool_name mutating_tools
-
 (** Map a config-level mode string to a policy usable as
-    [Effects.run_with_effects ~permission_policy].
-    - "auto"      : allow everything (default);
-    - "ask"       : prompt on mutating tools, allow the rest;
-    - "readonly"  : deny mutating tools outright. *)
+    [Effects.run_with_effects ~permission_policy]. *)
 let policy_of_mode mode : string -> string -> bool =
   match String.lowercase_ascii mode with
   | "ask" ->
-    (fun name args ->
-       if not (is_mutating name) then true
-       else check Ask_user name args)
+    (fun name args -> check_by_name Ask_user ~tool_name:name ~args)
   | "readonly" | "read-only" | "ro" ->
-    (fun name _args -> not (is_mutating name))
+    (fun name args -> check_by_name Deny_all ~tool_name:name ~args)
   | _ -> (fun _ _ -> true)
+
+

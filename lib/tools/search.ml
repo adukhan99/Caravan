@@ -56,6 +56,9 @@ module Search : TOOL = struct
         Printf.sprintf "[%d] %s\n    %s\n    %s" (i + 1) r.title r.url r.snippet)
       |> String.concat "\n\n"
 
+  let is_mutating = false
+  let describe_action input = Printf.sprintf "Web search: %s" input.query
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let get_api_key () =

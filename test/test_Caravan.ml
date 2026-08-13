@@ -294,6 +294,8 @@ let%test_unit "delegate_tool_validation_and_dispatch" =
         let json_schema () = `Assoc []
         let parse_args _ = Ok ""
         let format_output s = s
+        let is_mutating = false
+        let describe_action _ = "Unregistered tool"
         let execute _ = ""
       end)];
       provider = Some provider;
@@ -530,11 +532,11 @@ let%test_unit "caravan_error_handling" =
   assert (String.starts_with ~prefix:"Rate limited" h_429)
 
 let%test_unit "permission_policies" =
-  assert (Permission.check Permission.Always_allow "tool" "args");
-  assert (not (Permission.check Permission.Deny_all "tool" "args"));
-  let custom = Permission.Custom (fun name _args -> name = "safe_tool") in
-  assert (Permission.check custom "safe_tool" "");
-  assert (not (Permission.check custom "unsafe_tool" ""))
+  assert (Permission.check Permission.Always_allow ~is_mutating:true ~desc:"tool");
+  assert (not (Permission.check Permission.Deny_all ~is_mutating:true ~desc:"tool"));
+  let custom = Permission.Custom (fun desc _args -> desc = "safe_tool") in
+  assert (Permission.check custom ~is_mutating:true ~desc:"safe_tool");
+  assert (not (Permission.check custom ~is_mutating:true ~desc:"unsafe_tool"))
 
 let%expect_test "algebraic_effects_dispatch" =
   let logs = ref [] in
@@ -794,8 +796,8 @@ let%test_unit "permission_policy_modes" =
   assert (ro "web_search" "{}");
   let auto = Permission.policy_of_mode "auto" in
   assert (auto "bash" "{}");
-  assert (Permission.is_mutating "sed");
-  assert (not (Permission.is_mutating "grep"))
+  assert CaravanTools.Sed.Sed.is_mutating;
+  assert (not CaravanTools.Grep.Grep.is_mutating)
 
 let%test_unit "registry_lookup_and_errors" =
   let open CaravanProviders.Registry in
@@ -1584,5 +1586,20 @@ verbose = true
   let res_verbose = Ui.format_tool_result ~verbose:true ~output ~duration:1.2 () in
   assert (Re.execp (Re.compile (Re.str "(+2 lines)")) res_normal);
   assert (Re.execp (Re.compile (Re.str "line 3")) res_verbose)
+
+let%test_unit "parse_utf8_sanitization" =
+  let invalid_bytes = "Hello \xFF\xFE World" in
+  let parsed = Types.parse_utf8 invalid_bytes in
+  assert (parsed = "Hello \xEF\xBF\xBD\xEF\xBF\xBD World");
+
+  let msg = Types.user_msg invalid_bytes in
+  assert (msg.content = "Hello \xEF\xBF\xBD\xEF\xBF\xBD World");
+
+  let wire_json = Types.chat_message_to_wire_json msg in
+  let wire_str = Yojson.Safe.to_string wire_json in
+  (* Must be valid JSON and preserve the replacement character without crashing C++ JSON parsers *)
+  let round_tripped = Yojson.Safe.from_string wire_str in
+  assert (round_tripped <> `Null)
+
 
 

@@ -48,6 +48,9 @@ module Bash : TOOL with type input = string and type output = string = struct
 
   let format_output s = s
 
+  let is_mutating = true
+  let describe_action command = Printf.sprintf "Execute command: %s" command
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   (** Run through the shell with stderr merged into stdout, so the model

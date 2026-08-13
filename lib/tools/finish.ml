@@ -36,6 +36,9 @@ module Finish : TOOL = struct
   let format_output summary =
     Printf.sprintf "Task finished: %s" summary
 
+  let is_mutating = false
+  let describe_action _ = "Finish task"
+
   type _ Effect.t += Exec : input -> output Effect.t
   let execute input = 
     match input.summary with

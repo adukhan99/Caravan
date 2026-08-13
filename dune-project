@@ -44,6 +44,7 @@
   (eio-ssl
    (>= 0.3))
   redis-sync
+  uutf
   (ppx_expect (and :with-test (>= 0.16.0)))
   (ppx_inline_test (and :with-test (>= 0.16.0)))
   ppx_let

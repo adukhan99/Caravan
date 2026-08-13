@@ -24,6 +24,7 @@ depends: [
   "ssl" {>= "0.7"}
   "eio-ssl" {>= "0.3"}
   "redis-sync"
+  "uutf"
   "ppx_expect" {with-test & >= "0.16.0"}
   "ppx_inline_test" {with-test & >= "0.16.0"}
   "ppx_let"

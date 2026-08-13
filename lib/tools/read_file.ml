@@ -26,6 +26,9 @@ module Read_file : TOOL with type input = string and type output = (string, stri
 
   let format_output = function Ok s -> s | Error e -> e
 
+  let is_mutating = false
+  let describe_action path = Printf.sprintf "Read file: %s" path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute path =

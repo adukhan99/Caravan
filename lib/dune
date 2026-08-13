@@ -14,6 +14,7 @@
   otoml
   fmt
   redis-sync
+  uutf
   ppx_yojson_conv_lib)
  (preprocess
   (pps ppx_let ppx_yojson_conv))

@@ -44,11 +44,27 @@ type chat_message = {
   extra_content : Yojson.Safe.t option;
 }
 
+(** Parse a raw string into a guaranteed valid UTF-8 string at the domain boundary using [uutf].
+    Any malformed UTF-8 byte sequence is parsed into the Unicode Replacement
+    Character U+FFFD ("\xEF\xBF\xBD"). Valid UTF-8 strings are returned unchanged. *)
+let parse_utf8 (s : string) : string =
+  let buf = Buffer.create (String.length s) in
+  let has_malformed = ref false in
+  Uutf.String.fold_utf_8 (fun () _ -> function
+    | `Malformed _ ->
+        has_malformed := true;
+        Buffer.add_string buf "\xEF\xBF\xBD"
+    | `Uchar u ->
+        Uutf.Buffer.add_utf_8 buf u
+  ) () s;
+  if !has_malformed then Buffer.contents buf else s
+
+
 let make_message ?tool_calls ?extra_content role content = {
   role;
-  content;
+  content = parse_utf8 content;
   timestamp = Unix.gettimeofday ();
-  tool_calls;
+  tool_calls = Option.map (List.map (fun tc -> { tc with args = parse_utf8 tc.args })) tool_calls;
   extra_content;
 }
 
@@ -67,10 +83,11 @@ let tool_msg call_id content = make_message (Tool call_id) content
     content.  Returns the raw string unmodified if it is invalid JSON,
     as Yojson's serializer will safely escape it when wrapped in `String. *)
 let sanitize_json_args s =
+  let clean_s = parse_utf8 s in
   try
-    let json = Yojson.Safe.from_string s in
+    let json = Yojson.Safe.from_string clean_s in
     Yojson.Safe.to_string json
-  with Yojson.Json_error _ -> s
+  with Yojson.Json_error _ -> clean_s
 
 let tool_call_to_json tc =
   let fields = [
@@ -115,9 +132,9 @@ let tool_call_of_json_result json =
       | ec -> Some ec
     in
     Ok {
-      id   = json |> member "id"   |> to_string;
-      name = func |> member "name" |> to_string;
-      args = func |> member "arguments" |> to_string;
+      id   = parse_utf8 (json |> member "id"   |> to_string);
+      name = parse_utf8 (func |> member "name" |> to_string);
+      args = parse_utf8 (func |> member "arguments" |> to_string);
       extra_content;
     }
   with Yojson.Safe.Util.Type_error (msg, _) -> Error ("tool_call parse: " ^ msg)
@@ -164,7 +181,7 @@ let chat_message_of_json_result json =
     let%map tcs = tool_calls_r in
     {
       role;
-      content       = (match json |> member "content" with `String s -> s | `Null -> "" | _ -> "");
+      content       = parse_utf8 (match json |> member "content" with `String s -> s | `Null -> "" | _ -> "");
       timestamp     = (match json |> member "timestamp" with `Float f -> f | _ -> 0.0);
       tool_calls    = tcs;
       extra_content;

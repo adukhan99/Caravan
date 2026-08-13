@@ -45,6 +45,9 @@ module Sed : TOOL with type input = sed_input and type output = (unit, string) r
 
   let format_output = function Ok () -> "Replaced occurrences successfully." | Error e -> e
 
+  let is_mutating = true
+  let describe_action args = Printf.sprintf "Run sed replacement on %s" args.path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute { path; pattern; replacement } =

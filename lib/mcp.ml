@@ -253,6 +253,9 @@ let make_packed_tool (client : mcp_client) (tool_def : mcp_tool_def) =
     let parse_args json = Ok json
     let format_output s = s
 
+    let is_mutating = true
+    let describe_action _args = Printf.sprintf "Execute MCP tool '%s'" caravan_name
+
     type _ Effect.t += Exec : input -> output Effect.t
     let execute args = call_tool client tool_def.name args
   end in

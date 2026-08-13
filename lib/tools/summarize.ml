@@ -37,6 +37,9 @@ module Summarize = struct
 
   let format_output s = s
 
+  let is_mutating = false
+  let describe_action _ = "Summarize conversation history"
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute inp =

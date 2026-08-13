@@ -26,6 +26,9 @@ module Mkdir : TOOL with type input = string and type output = (unit, string) re
 
   let format_output = function Ok () -> "Directory created successfully." | Error e -> e
 
+  let is_mutating = true
+  let describe_action path = Printf.sprintf "Create directory: %s" path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let rec mkdir_p path =

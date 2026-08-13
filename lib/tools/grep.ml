@@ -39,6 +39,9 @@ module Grep : TOOL with type input = grep_input and type output = (string, strin
 
   let format_output = function Ok s -> s | Error e -> e
 
+  let is_mutating = false
+  let describe_action args = Printf.sprintf "Grep search for '%s' in %s" args.pattern args.path
+
   type _ Effect.t += Exec : input -> output Effect.t
 
   let execute { pattern; path } =

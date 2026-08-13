@@ -19,6 +19,16 @@ type subagent_spec = {
   model         : string option;
 }
 
+let resolve_tools registered names =
+  let resolved = List.map (fun name -> (name, Tool.find_tool registered name)) names in
+  let missing = List.filter_map (function (name, None) -> Some name | _ -> None) resolved in
+  if missing <> [] then
+    let known = List.map Tool.name_of_packed registered |> String.concat ", " in
+    Error (Printf.sprintf "Tool(s) not found in registered tools: %s. Known tools: %s"
+             (String.concat ", " missing) known)
+  else
+    Ok (List.filter_map (function (_, Some t) -> Some t | _ -> None) resolved)
+
 (** Build a fresh, isolated child session.
     - Always starts COLD: no parent conversation history is propagated.
     - Injects [compaction_suffix] into the system prompt.

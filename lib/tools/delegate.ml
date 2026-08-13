@@ -22,23 +22,14 @@ open Yojson.Safe.Util
 
 (* ── Startup-time validation ──────────────────────────────────────────────── *)
 
-(** Check every tool name in [spec.tools] exists in [registered_tools].
-    Raises [Invalid_argument] with a human-readable message on the first miss. *)
+(** Parse and resolve every tool in [spec.tools] against [registered_tools].
+    Raises [Invalid_argument] with a human-readable message on missing tools. *)
 let validate_tool_names subagent_name (spec : Caravan.Subagent.subagent_spec) registered_tools =
   let names = List.map Caravan.Tool.name_of_packed spec.tools in
-  List.iter (fun tn ->
-    match Caravan.Tool.find_tool registered_tools tn with
-    | Some _ -> ()
-    | None ->
-      let known =
-        List.map Caravan.Tool.name_of_packed registered_tools
-        |> String.concat ", "
-      in
-      invalid_arg (Printf.sprintf
-        "[Caravan] Subagent '%s': tool '%s' not found in registered tools.\n\
-         Known tools: %s"
-        subagent_name tn known)
-  ) names
+  match Caravan.Subagent.resolve_tools registered_tools names with
+  | Ok _ -> ()
+  | Error msg ->
+    invalid_arg (Printf.sprintf "[Caravan] Subagent '%s': %s" subagent_name msg)
 
 (* ── Shared mutable registry ──────────────────────────────────────────────── *)
 
@@ -284,5 +275,10 @@ let make
     let json_schema   = Delegate.json_schema
     let parse_args    = Delegate.parse_args
     let format_output = Delegate.format_output
+    let is_mutating   = true
+    let describe_action inp =
+      match inp with
+      | Single { subagent; task } -> Printf.sprintf "Delegate to subagent '%s': %s" subagent task
+      | Batch _ -> "Delegate batch of subagent tasks"
     let execute inp   = dispatch inp
   end)

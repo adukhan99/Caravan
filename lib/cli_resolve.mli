@@ -11,6 +11,8 @@ val resolve :
   unit ->
   string * string * string option
 
+(** [resolve_spec ~default_model ~default_base_url ~provider_cli ~model_cli ~base_url_cli ?api_key_cli ()]
+    resolves and constructs a fully resolved [Provider.provider_spec]. *)
 val resolve_spec :
   default_model:(string -> string) ->
   default_base_url:(string -> string) ->
@@ -20,8 +22,3 @@ val resolve_spec :
   ?api_key_cli:string ->
   unit ->
   Provider.provider_spec
-
-
-
-
-

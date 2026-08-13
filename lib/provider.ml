@@ -43,6 +43,7 @@ let list_models_packed net (Provider ((module P), cfg)) =
 
 let name_of_packed (Provider ((module P), _)) = P.name
 
+(** Unified configuration spec describing any LLM provider endpoint. *)
 type provider_spec = {
   name : string;
   base_url : string;
@@ -50,8 +51,11 @@ type provider_spec = {
   api_key : string option;
 }
 
+(** Parse raw provider configuration arguments into a [provider_spec].
+    [~default_base_url] is used when [base_url] is not explicitly specified. *)
 let parse_spec ~provider_name ~model ~base_url ~default_base_url ~api_key =
   { name = String.lowercase_ascii (String.trim provider_name);
     base_url = Option.value ~default:default_base_url base_url;
     model;
     api_key }
+

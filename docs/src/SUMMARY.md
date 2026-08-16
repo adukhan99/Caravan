@@ -17,6 +17,7 @@
 # Extending Caravan
 
 - [Library Guide](library.md)
+- [Plugins — Spatiotemporal Composability](plugins.md)
 - [Architecture](architecture.md)
 - [Development](development.md)
 - [API Reference](api.md)

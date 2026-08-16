@@ -32,6 +32,7 @@
   Lisp
   Trace
   Tls
+  Plugin
   Ui
   Monitor
   Provider

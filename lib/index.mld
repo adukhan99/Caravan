@@ -19,6 +19,7 @@ Caravan is partitioned into three focused libraries:
 - {!module-Caravan.Compaction_policy}: History compaction trigger rules and context budget thresholds.
 - {!module-Caravan.Trace}: Structured event streaming and audit logging (JSONL sink).
 - {!module-Caravan.Types}: Core message types ([chat_message], [role], [result_with_meta], [usage_stats]).
+- {!module-Caravan.Plugin}: Spatiotemporal composability runtime — revertible effects, reactive service injection, component lifecycles, isolation realms, declarative reconciliation.
 - {!module-Caravan.Provider}: Abstract LLM backend interface and packed existential provider wrapper.
 - {!module-Caravan.Tool}: First-class module tool interface ([TOOL]) and effect execution.
 - {!module-Caravan.Subagent}: Isolation and delegation of sub-tasks to dedicated worker subagents.

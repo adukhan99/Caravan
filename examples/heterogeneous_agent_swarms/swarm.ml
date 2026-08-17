@@ -130,6 +130,7 @@ let () =
         ~clock
         ~registered_tools:static_tools
         ~subagent_specs
+        ()
     in
 
     (* 5. Orchestrator tool list: only finish + delegate.

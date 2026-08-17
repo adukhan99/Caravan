@@ -231,6 +231,9 @@ type subagent_config = {
   temperature   : float option;
   tool_names    : string list; (** validated against registered tools at startup *)
   system_prompt : string;
+  realm         : string option;
+  (** Optional plugin-toolset sandbox realm: plugins registered into the
+      named realm add worker-only tools resolved at delegation time. *)
   gres          : gres;
 }
 
@@ -406,6 +409,7 @@ let get_subagents () =
                temperature   = assoc_float_opt fields "temperature";
                tool_names    = get_strl "tools";
                system_prompt = Option.value ~default:"" (get_str "system_prompt");
+               realm         = get_str "realm";
                gres          = parse_gres fields;
              }
            | _ -> None)
@@ -629,6 +633,7 @@ let editable_subagent_fields : (string * string * string * bool) list = [
   ("role",          "Worker role",    "atomic | parallel",   false);
   ("max_tokens",    "Max tokens",     "integer",             false);
   ("temperature",   "Temperature",    "0.0 – 2.0",          false);
+  ("realm",         "Sandbox realm",  "plugin toolset realm name", false);
 ]
 
 (** Append a new [[subagents]] entry to the config file.
@@ -674,6 +679,9 @@ let add_subagent (fields : (string * string) list) : (string, string) result =
          | _ -> ());
         (match lookup "role" with
          | Some r when r <> "" -> pairs := !pairs @ [("role", Otoml.string r)]
+         | _ -> ());
+        (match lookup "realm" with
+         | Some r when r <> "" -> pairs := !pairs @ [("realm", Otoml.string r)]
          | _ -> ());
         (match lookup "max_tokens" with
          | Some mt when mt <> "" ->
@@ -760,5 +768,6 @@ let subagent_to_json (cfg : subagent_config) : Yojson.Safe.t =
     ("tools",         `List (List.map (fun t -> `String t) cfg.tool_names));
     ("max_tokens",    (match cfg.max_tokens with Some n -> `Int n | None -> `Null));
     ("temperature",   (match cfg.temperature with Some f -> `Float f | None -> `Null));
+    ("realm",         (match cfg.realm with Some r -> `String r | None -> `Null));
   ]
 

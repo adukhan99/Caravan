@@ -289,3 +289,147 @@ let%test "with_tools swaps the toolset and keeps history" =
   let sess = Session.add_messages sess [ Types.user_msg "hello" ] in
   let sess' = Session.with_tools sess [] in
   Session.tools sess' = [] && Session.history sess' = Session.history sess
+
+(* ── Toolset realms (subagent sandboxes) ────────────────────────────── *)
+
+let%test_unit "reconcile isolate annotations bind entries into realms" =
+  let ctx = Plugin.make () in
+  let key : int Plugin.Key.t = Plugin.Key.create ~name:"svc" () in
+  let r = Plugin.Reconcile.create ctx in
+  let entry realm_annotations v =
+    {
+      Plugin.Reconcile.id = "e";
+      enabled = true;
+      config = `Int v;
+      isolate = realm_annotations;
+      plugin =
+        (fun cfg ->
+          let v = Yojson.Safe.Util.to_int cfg in
+          Plugin.component ~name:"p" ~provide:[ Plugin.Key.Ex key ] (fun c ->
+              ignore (Plugin.provide c key v)));
+    }
+  in
+  Plugin.Reconcile.apply r [ entry [ (Plugin.Key.Ex key, "r1") ] 1 ];
+  (* bound in realm r1, not in the default realm *)
+  assert (Plugin.find ctx key = None);
+  let in_r1 = Plugin.isolate ~realm:"r1" ctx (Plugin.Key.Ex key) in
+  assert (Plugin.find in_r1 key = Some 1);
+  (* changing the isolation rebuilds the entry into the new realm *)
+  Plugin.Reconcile.apply r [ entry [ (Plugin.Key.Ex key, "r2") ] 1 ];
+  assert (Plugin.find in_r1 key = None);
+  assert (
+    Plugin.find (Plugin.isolate ~realm:"r2" ctx (Plugin.Key.Ex key)) key = Some 1)
+
+let sandbox_tool_builder tool_name = fun _cfg ->
+  Plugin.component ~name:("pack:" ^ tool_name)
+    ~inject:[ Plugin.Key.Ex Plugin.Toolset.key ] (fun ctx ->
+      ignore
+        (Plugin.Toolset.register ctx
+           (Tool.Tool (module Fake_tool (struct let tool_name = tool_name end)))))
+
+let%test_unit "a realm-scoped plugin entry sandboxes its tools" =
+  with_config
+    {|
+provider = "ollama"
+
+[[plugins]]
+id = "worker-pack"
+plugin = "test.pack"
+realm = "research"
+|}
+    (fun () ->
+      let h = Plugin_host.create ~builtin_tools:fake_tools () in
+      Plugin_host.register_builder h "test.pack" (sandbox_tool_builder "probe");
+      Plugin_host.load h;
+      (* the shared toolset is untouched; the realm holds the tool *)
+      assert (tool_names h = [ "alpha"; "beta" ]);
+      assert (
+        List.map Tool.name_of_packed (Plugin_host.realm_tools h ~realm:"research")
+        = [ "probe" ]);
+      assert (Plugin_host.realm_tools h ~realm:"other" = []);
+      (* disabling the entry withdraws the sandbox tool, live *)
+      assert (Plugin_host.set_enabled h ~id:"worker-pack" false = Ok ());
+      assert (Plugin_host.realm_tools h ~realm:"research" = []);
+      assert (Plugin_host.set_enabled h ~id:"worker-pack" true = Ok ());
+      assert (
+        List.map Tool.name_of_packed (Plugin_host.realm_tools h ~realm:"research")
+        = [ "probe" ]))
+
+let%test_unit "two entries naming one realm share its toolset" =
+  with_config
+    {|
+provider = "ollama"
+
+[[plugins]]
+id = "pack-a"
+plugin = "test.a"
+realm = "shared"
+
+[[plugins]]
+id = "pack-b"
+plugin = "test.b"
+realm = "shared"
+|}
+    (fun () ->
+      let h = Plugin_host.create ~builtin_tools:fake_tools () in
+      Plugin_host.register_builder h "test.a" (sandbox_tool_builder "tool_a");
+      Plugin_host.register_builder h "test.b" (sandbox_tool_builder "tool_b");
+      Plugin_host.load h;
+      assert (
+        List.sort compare
+          (List.map Tool.name_of_packed (Plugin_host.realm_tools h ~realm:"shared"))
+        = [ "tool_a"; "tool_b" ]))
+
+let%test_unit "config parses the subagent realm field" =
+  with_config
+    {|
+provider = "ollama"
+
+[[subagents]]
+name = "researcher"
+provider = "ollama"
+model = "m"
+realm = "research"
+
+[[subagents]]
+name = "plain"
+provider = "ollama"
+model = "m"
+|}
+    (fun () ->
+      match Config.get_subagents () with
+      | [ a; b ] ->
+        assert (a.Config.realm = Some "research");
+        assert (b.Config.realm = None)
+      | l -> failwith (Printf.sprintf "expected 2 subagents, got %d" (List.length l)))
+
+let%test_unit "delegate merges live sandbox tools at dispatch, statics win" =
+  let base = fake_tools () in
+  let spec =
+    {
+      Subagent.name = "worker";
+      role = "atomic";
+      system_prompt = "";
+      tools = base;
+      provider = None;
+      model = None;
+    }
+  in
+  (* no sandbox: the spec passes through untouched (same value) *)
+  let same = CaravanTools.Delegate.effective_spec ~live_tools:(fun _ -> []) spec in
+  assert (same.Subagent.tools == base);
+  (* sandbox tools are appended; name collisions resolve to the static tool *)
+  let dup = Tool.Tool (module Fake_tool (struct let tool_name = "alpha" end)) in
+  let fresh = Tool.Tool (module Fake_tool (struct let tool_name = "gamma" end)) in
+  let merged =
+    CaravanTools.Delegate.effective_spec
+      ~live_tools:(fun name ->
+        assert (name = "worker");
+        [ dup; fresh ])
+      spec
+  in
+  assert (
+    List.map Tool.name_of_packed merged.Subagent.tools
+    = [ "alpha"; "beta"; "gamma" ]);
+  (* the surviving alpha is the static one, not the sandbox duplicate *)
+  assert (List.nth merged.Subagent.tools 0 == List.nth base 0)

@@ -442,7 +442,8 @@ let%test_unit "reconcile creates, keeps, rebuilds, and disposes entries" =
   in
   let r = Plugin.Reconcile.create ctx in
   let entry ?(enabled = true) id text =
-    { Plugin.Reconcile.id; enabled; config = `Assoc [ ("text", `String text) ]; plugin }
+    { Plugin.Reconcile.id; enabled; config = `Assoc [ ("text", `String text) ];
+      isolate = []; plugin }
   in
   (* create *)
   Plugin.Reconcile.apply r [ entry "e1" "hello" ];
@@ -475,6 +476,7 @@ let%test "reconcile rejects duplicate ids" =
       Plugin.Reconcile.id;
       enabled = true;
       config = `Null;
+      isolate = [];
       plugin = (fun _ -> Plugin.component ~name:id (fun _ -> ()));
     }
   in

@@ -7,7 +7,7 @@
       let delegate_tool =
         Delegate.make ~net ~clock
           ~registered_tools:CaravanTools.All_tools.all_tools
-          ~subagent_specs
+          ~subagent_specs ()
       in
       let orchestrator_tools = [finish_tool; delegate_tool] in
     ]}
@@ -149,18 +149,39 @@ end
 
 (* ── Factory function ─────────────────────────────────────────────────────── *)
 
+(** Merge dispatch-time tools into a spec: [live_tools spec.name] is
+    resolved at every delegation, so a worker's sandbox (e.g. a plugin
+    toolset realm, see [Caravan.Plugin_host.realm_tools]) can change
+    between calls without rebuilding the delegate tool. Statically
+    declared tools win on name collisions. Exposed for tests. *)
+let effective_spec ~live_tools (spec : Caravan.Subagent.subagent_spec) =
+  match (live_tools spec.name : Caravan.Tool.packed_tool list) with
+  | [] -> spec
+  | extra ->
+    let base_names = List.map Caravan.Tool.name_of_packed spec.tools in
+    let extra =
+      List.filter
+        (fun t -> not (List.mem (Caravan.Tool.name_of_packed t) base_names))
+        extra
+    in
+    { spec with tools = spec.tools @ extra }
+
 (** Build and return the delegate [packed_tool].
 
     @param net              Eio network handle (from the enclosing fiber).
     @param clock            Eio clock handle.
     @param registered_tools Full tool list — used only for name validation.
+    @param live_tools       Per-worker tools resolved at delegation time
+                            (default: none). See [effective_spec].
     @param subagent_specs   Resolved specs with provider already set.
     @raise Invalid_argument on unknown tool name in any spec. *)
 let make
     ~(net              : _ Eio.Net.t)
     ~(clock            : _ Eio.Time.clock)
     ~(registered_tools : Caravan.Tool.packed_tool list)
+    ?(live_tools : string -> Caravan.Tool.packed_tool list = fun _ -> [])
     ~(subagent_specs   : Caravan.Subagent.subagent_spec list)
+    ()
   : Caravan.Tool.packed_tool =
   (* Validate at startup — before any token is spent *)
   List.iter (fun (spec : Caravan.Subagent.subagent_spec) ->
@@ -182,6 +203,7 @@ let make
       in
       Error (Printf.sprintf "Error: unknown subagent '%s'. Available: %s" subagent available)
     | Some (spec : Caravan.Subagent.subagent_spec) ->
+      let spec = effective_spec ~live_tools spec in
       let parent_provider =
         match spec.provider with
         | Some p -> p
@@ -230,6 +252,7 @@ let make
         in
         let tasks_with_sessions =
           List.map (fun ((spec : Caravan.Subagent.subagent_spec), task) ->
+            let spec = effective_spec ~live_tools spec in
             let parent_provider =
               match spec.provider with
               | Some p -> p

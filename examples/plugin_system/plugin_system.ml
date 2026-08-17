@@ -85,6 +85,7 @@ let () =
       Plugin.Reconcile.id = "echo";
       enabled = true;
       config = `Assoc [ ("text", `String text) ];
+      isolate = [];
       plugin = echo_plugin;
     }
   in

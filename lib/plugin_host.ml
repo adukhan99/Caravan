@@ -6,6 +6,9 @@ type t = {
   mutable current : Config.plugin_config list;
   reconciler : Plugin.Reconcile.t;
   mutable provider_disposer : Plugin.Disposer.t option;
+  realms : (string, Plugin.context) Hashtbl.t;
+  (* named toolset realms (subagent sandboxes); each holds a derived
+     context with its own Toolset provider mounted *)
 }
 
 (* ── Built-in builders ───────────────────────────────────────────────── *)
@@ -73,10 +76,36 @@ let create ?builtin_tools () =
     current = [];
     reconciler = Plugin.Reconcile.create ctx;
     provider_disposer = None;
+    realms = Hashtbl.create 4;
   }
 
 let context t = t.ctx
 let register_builder t name builder = Hashtbl.replace t.builders name builder
+
+(* ── Toolset realms (sandboxes) ──────────────────────────────────────── *)
+
+let realm_context t ~realm =
+  match Hashtbl.find_opt t.realms realm with
+  | Some ctx -> ctx
+  | None ->
+    let ctx = Plugin.isolate ~realm t.ctx (Plugin.Key.Ex Plugin.Toolset.key) in
+    ignore (Plugin.use ctx Plugin.Toolset.provider);
+    Hashtbl.replace t.realms realm ctx;
+    ctx
+
+let realm_tools t ~realm =
+  Plugin.Toolset.snapshot (realm_context t ~realm)
+
+(* A [[plugins]] entry with a "realm" field registers its tools in that
+   named realm instead of the shared toolset. Materializing the realm
+   here (provider and all) means the entry can activate reactively in
+   any order. *)
+let entry_isolation t (e : Config.plugin_config) =
+  match Yojson.Safe.Util.member "realm" e.config with
+  | `String realm ->
+    ignore (realm_context t ~realm);
+    [ (Plugin.Key.Ex Plugin.Toolset.key, realm) ]
+  | _ -> []
 
 (* The composition when the config is silent: built-in tools plus one
    MCP mount per [[mcp.servers]] entry. *)
@@ -121,6 +150,7 @@ let apply t entries =
     (List.map
        (fun (e : Config.plugin_config) ->
          { Plugin.Reconcile.id = e.id; enabled = e.enabled; config = e.config;
+           isolate = entry_isolation t e;
            plugin = (fun cfg -> (Hashtbl.find t.builders e.plugin) cfg) })
        usable)
 

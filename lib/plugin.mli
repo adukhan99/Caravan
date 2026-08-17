@@ -291,6 +291,10 @@ module Reconcile : sig
     id : string;  (** stable identity used as the reconciliation key *)
     enabled : bool;
     config : Yojson.Safe.t;
+    isolate : (Key.ex * string) list;
+    (** isolation annotations (paper Def. 74): each key is resolved in
+        the named global realm for this entry's fiber. Changing them
+        rebuilds the entry. *)
     plugin : Yojson.Safe.t -> component;  (** applied to [config] *)
   }
 

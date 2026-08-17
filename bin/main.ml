@@ -100,7 +100,7 @@ let resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli =
 let make_session ~net ~clock ~provider_name ~model ~base_url ~system =
   let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
   Plugin_host.set_provider (Lazy.force host) provider;
-  let tools = Subagents.session_tools ~net ~clock (all_tools ()) in
+  let tools = Subagents.session_tools ~net ~clock ~host:(Lazy.force host) (all_tools ()) in
   let sess = Session.create ~tools model provider in
   match system with Some s -> Session.set_system sess s | None -> sess
 
@@ -472,7 +472,14 @@ let handle_slash_command net clock st line =
           (Printf.sprintf "%-28s" (white (truncate_visible cfg.model 28)))
           (dim provider_status));
         if cfg.tool_names <> [] then
-          println_ansi (dim (Printf.sprintf "      tools: %s" (String.concat ", " cfg.tool_names)))
+          println_ansi (dim (Printf.sprintf "      tools: %s" (String.concat ", " cfg.tool_names)));
+        (match cfg.realm with
+         | Some realm ->
+           let sandbox = Plugin_host.realm_tools (Lazy.force host) ~realm in
+           println_ansi (dim (Printf.sprintf "      realm: %s (%d sandbox tool%s)"
+             realm (List.length sandbox)
+             (if List.length sandbox = 1 then "" else "s")))
+         | None -> ())
       ) roster;
       print_newline ();
       if not (Subagents.enabled ()) then
@@ -534,7 +541,7 @@ let handle_slash_command net clock st line =
         | Ok () ->
           st.session <-
             Session.with_tools st.session
-              (Subagents.session_tools ~net ~clock (all_tools ()));
+              (Subagents.session_tools ~net ~clock ~host:h (all_tools ()));
           confirm "plugin '%s' %sd" id action
         | Error e -> println_ansi (red ("  ✗ " ^ e)))
      | _ -> usage "/plugins" "[enable|disable <id>]")

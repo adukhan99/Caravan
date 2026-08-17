@@ -168,6 +168,13 @@ policy layer over the runtime):
 - **`/plugins`** lists each entry with its live lifecycle state;
   `/plugins enable|disable <id>` reconciles one entry and refreshes the
   session's toolset in place.
+- **Subagent workers can be sandboxed** — a `[[plugins]]` entry with a
+  `realm = "<name>"` field registers its tools into an isolated toolset
+  realm instead of the shared one (the entry is instantiated with
+  `Toolset.key` isolated — the `isolate` annotation of the paper's
+  loader entries, Def. 74), and a `[[subagents]]` worker declaring the
+  same `realm` resolves those tools at delegation time. See
+  [Subagents → Sandbox realms](subagents.md#sandbox-realms).
 - **The active provider is a service** (`Plugin.Services.provider`).
   The CLI provides it at session setup and re-provides it on
   `/provider` and `/model` switches, so a plugin that `inject`s it

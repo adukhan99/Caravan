@@ -628,8 +628,15 @@ module Reconcile = struct
     id : string;
     enabled : bool;
     config : Yojson.Safe.t;
+    isolate : (Key.ex * string) list;
     plugin : Yojson.Safe.t -> component;
   }
+
+  (* Key.ex contains first-class modules, so entries are compared on
+     key uids rather than structurally. *)
+  let same_isolate a b =
+    List.map (fun (ex, r) -> (Key.ex_uid ex, r)) a
+    = List.map (fun (ex, r) -> (Key.ex_uid ex, r)) b
 
   type slot = { s_entry : entry; s_fiber : Fiber.t option }
   type t = { r_ctx : context; mutable slots : (string * slot) list }
@@ -637,7 +644,15 @@ module Reconcile = struct
   let create ctx = { r_ctx = ctx; slots = [] }
 
   let instantiate t (e : entry) =
-    if e.enabled then Some (use t.r_ctx (e.plugin e.config)) else None
+    if e.enabled then begin
+      let ctx =
+        List.fold_left
+          (fun ctx (ex, realm) -> isolate ~realm ctx ex)
+          t.r_ctx e.isolate
+      in
+      Some (use ctx (e.plugin e.config))
+    end
+    else None
 
   let apply t entries =
     let ids = List.map (fun (e : entry) -> e.id) entries in
@@ -661,7 +676,8 @@ module Reconcile = struct
             match List.assoc_opt e.id t.slots with
             | Some old
               when old.s_entry.enabled = e.enabled
-                   && old.s_entry.config = e.config ->
+                   && old.s_entry.config = e.config
+                   && same_isolate old.s_entry.isolate e.isolate ->
               { s_entry = e; s_fiber = old.s_fiber }
             | Some old ->
               Option.iter dispose old.s_fiber;

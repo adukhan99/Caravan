@@ -42,6 +42,40 @@ system_prompt = "You review diffs ruthlessly but concisely."
   conversation);
 - results stream back into the orchestrator's context.
 
+## Sandbox realms
+
+A worker can carry a plugin-toolset sandbox
+(see [Plugins](plugins.md)):
+
+```toml
+[[subagents]]
+name  = "researcher"
+provider = "ollama"
+model = "qwen3:8b"
+tools = ["read_file", "web_search"]   # explicit whitelist, as before
+realm = "research"                    # + everything plugins put here
+
+[[plugins]]
+id     = "research-mcp"
+plugin = "tools.mcp"
+realm  = "research"                   # this server's tools go ONLY to
+command = "npx"                       # workers with realm = "research"
+args   = ["-y", "@modelcontextprotocol/server-arxiv"]
+```
+
+Semantics:
+
+- `tools` stays the explicit whitelist against the shared toolset —
+  nothing changes for existing configs;
+- `realm` **adds** whatever plugins registered into the named realm,
+  resolved **at delegation time** — plugins loading, unloading, or
+  being toggled between delegations take effect on the next `delegate`
+  call, with no restart. On a name collision the whitelisted tool wins;
+- realm tools never appear in the orchestrator's toolset, and workers
+  without the realm never see them — the same key, isolated bindings
+  (the paper's coeffect isolation);
+- `/subagents` shows each worker's realm and its current sandbox size.
+
 ## Governance
 
 - `delegate` is a **mutating** tool: `ask` prompts, `readonly` denies;

@@ -158,17 +158,60 @@ the REPL offline (`/plugins`, `/tools`, live disable).
   needs Eio handles (`~net ~clock`) at construction, so it is layered
   onto the snapshot per session as before.
 
+## What was built (2026-08-17, second entry) — subagent sandbox realms
+
+The `isolate` open item, done per its own design sketch:
+
+- **`Reconcile.entry` gained `isolate` annotations** — `(Key.ex *
+  realm) list`, the isolation field of the paper's loader entries
+  (Def. 74). The entry's fiber is instantiated on a context derived by
+  folding `Plugin.isolate` over them; changing them rebuilds the entry.
+- **`Plugin_host` manages named toolset realms** — `realm_context`
+  materializes a realm on first use (own `Toolset` provider mounted);
+  `realm_tools` snapshots it. A `[[plugins]]` entry with
+  `realm = "<name>"` is instantiated with `Toolset.key` isolated to
+  that realm, so its registrations never touch the shared toolset.
+- **`[[subagents]]` gained an optional `realm` field** (config type,
+  parser, UI field descriptors, TOML writer, JSON serializer). The
+  semantics are additive and back-compatible: `tools` stays the
+  explicit whitelist against the shared toolset; `realm` adds whatever
+  plugins registered into the named realm.
+- **Dispatch-time resolution, not construction-time** —
+  `Delegate.make` gained `?live_tools : string -> packed_tool list`
+  (default none, trailing `()` added for erasability), applied by
+  `effective_spec` per delegation with statics winning on name
+  collisions. The bin side closes it over
+  `Plugin_host.realm_tools`, so toggling a realm plugin between
+  delegations changes the very next worker's toolset — no delegate
+  rebuild, no restart.
+- `/subagents` shows each worker's realm and live sandbox size.
+
+Five new tests (isolate-annotation rebuild, realm scoping + live
+toggle, shared realms, config parsing, `effective_spec` merge/dedup),
+suite green; REPL smoke shows `realm: research (0 sandbox tools)`.
+
+### Friction encountered (this round)
+
+7. **Warning 16 (unerasable optional argument).** `?live_tools` in an
+   all-labeled signature can't be erased; `Delegate.make` gained a
+   trailing `()` (four call sites updated).
+8. **`Key.ex` is not structurally comparable** — it carries first-class
+   modules, so `=` on isolate annotation lists could raise at runtime.
+   Reconcile compares them via key uids (`same_isolate`), the same
+   reason the engine compares committed views by uid.
+
+### Decisions (review welcome)
+
+- **Additive sandbox semantics.** A worker's `tools` whitelist already
+  excludes by omission; `realm` only ever adds. Full-replacement
+  semantics ("realm workers see nothing but the realm") was considered
+  and rejected: it would silently strip `finish` and break the
+  worker-completes contract.
+- **Statics win on name collision** — a sandbox plugin cannot shadow a
+  whitelisted tool, which would be a confused-deputy vector.
+
 ## Open items / future direction
 
-- **Subagent sandboxes via `isolate`.** Still open, deliberately:
-  subagent tool lists are built eagerly from config
-  (`Subagents.build_spec` → `Delegate.make`), with no context
-  participating. Doing this honestly means threading a per-worker
-  derived context (`isolate` on `Toolset.key`) through delegate
-  construction so plugins can register worker-only tools — a refactor
-  of the delegate path, not a bolt-on. Design sketch: give each
-  `[[subagents]]` entry an optional `realm` field; workers with one
-  resolve the toolset in that realm.
 - **Per-plugin provider slots.** `Services.provider` is a single
   binding; `isolate` already supports realm-per-plugin providers when
   a consumer needs a different model — needs a config surface.

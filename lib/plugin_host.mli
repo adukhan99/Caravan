@@ -67,6 +67,18 @@ val fiber : t -> string -> Plugin.Fiber.t option
 val tools : t -> Tool.packed_tool list
 (** Live snapshot of the shared toolset — pass to [Session.create]. *)
 
+val realm_context : t -> realm:string -> Plugin.context
+(** The named toolset realm's context, materialized on first use (its
+    own {!Plugin.Toolset} provider is mounted in the realm). A
+    `[[plugins]]` entry with a [realm = "<name>"] field is instantiated
+    with {!Plugin.Toolset.key} isolated to this realm, so the tools it
+    registers land here instead of the shared toolset. *)
+
+val realm_tools : t -> realm:string -> Tool.packed_tool list
+(** Live snapshot of a named realm's toolset. Subagent workers declared
+    with [realm = "<name>"] resolve these at delegation time — the
+    sandbox contents can change between delegations. *)
+
 val set_provider : t -> Provider.packed_provider -> unit
 (** Bind (or rebind) the {!Plugin.Services.provider} service. The
     previous binding is withdrawn first, so provider-dependent plugins

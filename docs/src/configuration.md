@@ -102,6 +102,10 @@ args    = ["-y", "@modelcontextprotocol/server-filesystem", "/home/you/ws"]
   embedding application registered); `id` defaults to it.
 - Entries merge over the defaults by `id` — redeclaring
   `tools.builtin` with `enabled = false` switches the default off.
+- An optional `realm = "<name>"` field sandboxes the entry's tools
+  into an isolated realm that only `[[subagents]]` workers declaring
+  the same `realm` can see — details in
+  [Subagents → Sandbox realms](subagents.md#sandbox-realms).
 - `/plugins` in the REPL shows each entry's lifecycle state;
   `/plugins enable|disable <id>` toggles one for the session.
 

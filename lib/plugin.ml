@@ -142,7 +142,7 @@ and runtime = {
   r_listeners : (int, listener list ref) Hashtbl.t;
   r_queue : fiber Queue.t;
   mutable r_settling : bool;
-  mutable r_observer : (fiber -> unit) option;
+  mutable r_observers : (fiber -> unit) list; (* registration order *)
 }
 
 let root_uid = -1
@@ -157,18 +157,16 @@ let make () =
       r_listeners = Hashtbl.create 16;
       r_queue = Queue.create ();
       r_settling = false;
-      r_observer = None;
+      r_observers = [];
     }
   in
   { rt; cfiber = None; iso = []; meta = [] }
 
-let observe ctx fn = ctx.rt.r_observer <- Some fn
+let observe ctx fn = ctx.rt.r_observers <- ctx.rt.r_observers @ [ fn ]
 
 let set_state f st =
   f.f_state <- st;
-  match f.f_parent.rt.r_observer with
-  | None -> ()
-  | Some fn -> ( try fn f with _ -> ())
+  List.iter (fun fn -> try fn f with _ -> ()) f.f_parent.rt.r_observers
 
 (* ── Realm resolution ───────────────────────────────────────────────── *)
 
@@ -584,6 +582,23 @@ let fibers ctx =
   List.filter
     (fun f -> match f.f_state with SDisposed -> false | _ -> true)
     ctx.rt.r_fibers
+
+let trace_transitions ctx =
+  observe ctx (fun f ->
+      Trace.emit
+        (Trace.Plugin_transition
+           {
+             name = Fiber.name f;
+             uid = Fiber.uid f;
+             state = Format.asprintf "%a" Fiber.pp_state (Fiber.state f);
+           }))
+
+(* ── Well-known harness service keys ────────────────────────────────── *)
+
+module Services = struct
+  let provider : Provider.packed_provider Key.t =
+    Key.create ~name:"provider" ()
+end
 
 (* ── Tool registry service ──────────────────────────────────────────── *)
 

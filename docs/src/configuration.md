@@ -77,6 +77,34 @@ command   = "npx"
 args      = ["-y", "@modelcontextprotocol/server-filesystem", "/home/you/ws"]
 ```
 
+## Plugins
+
+Caravan's tool composition runs on the plugin runtime
+(see [Plugins](plugins.md)). With no `[[plugins]]` table the default
+composition applies: the built-in tools plus one MCP mount per
+`[[mcp.servers]]` entry — existing configs behave exactly as before.
+Declare `[[plugins]]` entries to take control:
+
+```toml
+[[plugins]]                      # built-in tools, minus bash
+plugin  = "tools.builtin"
+exclude = ["bash"]
+
+[[plugins]]                      # an MCP server as a plugin
+id      = "fs"
+plugin  = "tools.mcp"
+name    = "filesystem"
+command = "npx"
+args    = ["-y", "@modelcontextprotocol/server-filesystem", "/home/you/ws"]
+```
+
+- `plugin` names a builder (`tools.builtin`, `tools.mcp`, or one an
+  embedding application registered); `id` defaults to it.
+- Entries merge over the defaults by `id` — redeclaring
+  `tools.builtin` with `enabled = false` switches the default off.
+- `/plugins` in the REPL shows each entry's lifecycle state;
+  `/plugins enable|disable <id>` toggles one for the session.
+
 ## Diagnostics
 
 ```bash

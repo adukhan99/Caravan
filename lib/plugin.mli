@@ -238,8 +238,23 @@ val fibers : context -> Fiber.t list
 (** All live fibers of the runtime, in instantiation order. *)
 
 val observe : context -> (Fiber.t -> unit) -> unit
-(** Install a callback invoked after every fiber state change (at most
-    one per runtime; later calls replace it). For UIs and logging. *)
+(** Install a callback invoked after every fiber state change.
+    Callbacks accumulate and fire in registration order; exceptions
+    they raise are swallowed. For UIs and logging. *)
+
+val trace_transitions : context -> unit
+(** Install an observer that emits a {!Trace.Plugin_transition} event
+    for every fiber state change, putting plugin lifecycles in the
+    session transcript. *)
+
+(** Well-known service keys the Caravan harness binds, so plugins can
+    [inject] harness facilities by name. *)
+module Services : sig
+  val provider : Provider.packed_provider Key.t
+  (** The active LLM provider. The CLI provides it at session setup and
+      re-provides it on [/provider] and [/model] switches, so dependent
+      plugins reload against the new provider. *)
+end
 
 (** {1 Tool registry service} *)
 

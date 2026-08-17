@@ -227,6 +227,7 @@ the tool calls that produced it, plus token usage.
 | `/temp` `/top_p` `/top_k` `/max_tokens` `/seed` `/stop` | generation options |
 | `/memory <n>` · `/summarise` | context window size / compact now |
 | `/history` · `/export [file]` · `/tools` · `/config` | inspect the session |
+| `/plugins [enable\|disable <id>]` | plugin composition, live |
 | `/help` · `/quit` | you know these |
 
 ---

@@ -33,6 +33,7 @@
   Trace
   Tls
   Plugin
+  Plugin_host
   Ui
   Monitor
   Provider

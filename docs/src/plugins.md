@@ -150,6 +150,34 @@ removed ones dispose, and a changed config or flag rebuilds just that
 entry. This is the loader pattern of the paper's §5.2.1: an orchestrator
 edits a description; the runtime performs the minimal transitions.
 
+## The harness runs on it
+
+The CLI's tool composition is itself plugin-hosted (`Plugin_host`, the
+policy layer over the runtime):
+
+- **Built-in tools and MCP servers are plugin fibers.** `Plugin_host`
+  keeps a registry of named builders (`tools.builtin`, `tools.mcp`,
+  plus any an embedding application registers) and reconciles
+  `[[plugins]]` config entries into running fibers — with the classic
+  composition (built-ins + `[[mcp.servers]]`) synthesized as the
+  default when the table is absent. See
+  [Configuration → Plugins](configuration.md#plugins).
+- **MCP mounts are revertible**: disposing an `tools.mcp` fiber closes
+  the server process and withdraws its tools; a failed connection is a
+  `Failed` fiber, visible in `/plugins`, that never disturbs siblings.
+- **`/plugins`** lists each entry with its live lifecycle state;
+  `/plugins enable|disable <id>` reconciles one entry and refreshes the
+  session's toolset in place.
+- **The active provider is a service** (`Plugin.Services.provider`).
+  The CLI provides it at session setup and re-provides it on
+  `/provider` and `/model` switches, so a plugin that `inject`s it
+  reloads against the new provider automatically.
+- **Lifecycles are auditable**: every fiber transition is a
+  `Trace.Plugin_transition` event (verbose mode prints them; the JSONL
+  transcript always records them), and run failures at the REPL/agent
+  boundaries are recorded as `Trace.Run_error` events — failed sessions
+  leave transcripts too.
+
 ## Scope and honest limits
 
 - **Synchronous core.** Transitions are the paper's base calculus +

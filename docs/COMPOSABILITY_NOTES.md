@@ -88,20 +88,94 @@ Example: `examples/plugin_system/`. Guide: `docs/src/plugins.md`.
   (as does Cordis's Algorithm 3). Fine for harness-scale plugin counts
   (tens); index by key uid if that assumption breaks.
 
+## What was built (2026-08-17) — the harness wired onto the runtime
+
+The open items of the first entry, fulfilled:
+
+- **`Plugin_host` (lib/plugin_host.ml{,i})** — the policy layer the CLI
+  runs on: a registry of named builders (`Yojson.Safe.t -> component`),
+  `[[plugins]]` config entries reconciled into fibers, and two
+  pre-registered builders: `tools.builtin` (registers the built-in
+  tools; `exclude` drops by name) and `tools.mcp` (connects an MCP
+  server on activation, closes it on disposal — MCP mounts are now
+  revertible, and a failed connection is a visible `Failed` fiber
+  instead of a swallowed warning).
+- **Config-driven composition** — `Config.get_plugins` parses
+  `[[plugins]]` (with a TOML→JSON converter for arbitrary per-plugin
+  config). When the table is absent, `Plugin_host.load` synthesizes the
+  classic composition (built-ins + `[[mcp.servers]]`), so every
+  existing config behaves identically; declared entries merge over
+  those defaults by id, so `enabled = false` can switch a default off.
+- **`bin/main.ml` runs on the host** — `all_tools`/`init_mcp` replaced
+  by the lazy host; sessions read `Toolset.snapshot`; the new
+  `/plugins` command lists entries with live lifecycle states and
+  `enable|disable <id>` reconciles one entry and refreshes the
+  session's toolset in place (`Session.with_tools`, new).
+- **Provider as a service** — `Plugin.Services.provider` is bound at
+  session setup and re-bound on `/provider` and `/model` switches
+  (withdraw-then-provide, so dependents reload against the new
+  provider).
+- **Lifecycle events in `Trace`** — `Plugin.trace_transitions` emits
+  `Trace.Plugin_transition` per fiber state change (observers are now
+  a list, not a single slot); rendered dim in verbose mode, always in
+  the JSONL transcript.
+- **The carried-over error gap, closed** — `Trace.Run_error` +
+  `Trace.error`, emitted from the REPL turn/agent/summarize/one-shot
+  catch sites. The renderer deliberately prints nothing for it (the
+  catch sites already own the terminal output); the event exists so
+  failed sessions leave auditable transcripts.
+
+Tests: `test/test_plugin_host.ml`, 13 cases (config parsing, default
+synthesis, merge-over-defaults, unknown-builder tolerance, live
+enable/disable, custom builders, MCP failure isolation, provider
+rebind reactivity, trace transitions, accumulating observers,
+Run_error JSON shape, session tool swap). Smoke-tested end-to-end in
+the REPL offline (`/plugins`, `/tools`, live disable).
+
+### Friction encountered (this round)
+
+5. **Emitting `Run_error` from catch sites risks double-printing.**
+   The catch sites already print failures in their own formats (REPL
+   red lines, one-shot stderr + exit codes, `--json` payloads), and
+   several of those channels must not gain stray stdout lines. Decision:
+   the renderer ignores `Run_error` entirely — the event's job is the
+   transcript, the catch site keeps owning the terminal. Revisit if a
+   front-end ever wants to be pure-sink.
+6. **`init_mcp` was called at four entry points**, each of which had to
+   keep working when the host is created lazily. A `lazy` host whose
+   forcing performs the first `load` covers every path (including ones
+   that never call the init explicitly).
+
+### Decisions (review welcome)
+
+- **`[[plugins]]` merges over defaults rather than replacing them.**
+  A user adding one entry must not silently lose their MCP servers;
+  overriding by id still allows disabling any default.
+- **`/plugins` toggles are session-only** — the config file is not
+  written. Persistence is `caravan config` / editing the TOML; the
+  REPL toggle is for experimentation.
+- **The delegate tool stays outside the plugin runtime** for now: it
+  needs Eio handles (`~net ~clock`) at construction, so it is layered
+  onto the snapshot per session as before.
+
 ## Open items / future direction
 
-- **Wire the harness onto the runtime.** `bin/main.ml` still assembles
-  tools/providers statically. Next steps, in rough order of value:
-  session toolsets read from `Toolset.snapshot` (live `/tools` +
-  MCP-server mounts as plugins), providers as a service key, subagent
-  sandboxes via `isolate`.
-- **Config-driven plugin entries.** A `[[plugins]]` TOML table feeding
-  `Reconcile` would give end users declarative composition without
-  writing OCaml.
-- **Lifecycle events into `Trace`.** `observe` exists; emitting
-  structured `Trace` events from it would put plugin transitions in the
-  session transcript.
-- *(carried over from the overhaul log's field notes)* Provider/tool
-  exceptions surface to the user but are not written to the JSONL
-  transcript — `Trace` should gain an Error event emitted from the
-  REPL/agent catch sites so failed sessions are auditable too.
+- **Subagent sandboxes via `isolate`.** Still open, deliberately:
+  subagent tool lists are built eagerly from config
+  (`Subagents.build_spec` → `Delegate.make`), with no context
+  participating. Doing this honestly means threading a per-worker
+  derived context (`isolate` on `Toolset.key`) through delegate
+  construction so plugins can register worker-only tools — a refactor
+  of the delegate path, not a bolt-on. Design sketch: give each
+  `[[subagents]]` entry an optional `realm` field; workers with one
+  resolve the toolset in that realm.
+- **Per-plugin provider slots.** `Services.provider` is a single
+  binding; `isolate` already supports realm-per-plugin providers when
+  a consumer needs a different model — needs a config surface.
+- **Async inertia layer** (paper §4.3.3) — unchanged from the first
+  entry: an Eio-fibered `reload`/`unload` when plugin bodies need to
+  await I/O without blocking `use`. MCP mounts are today's only slow
+  activation (process spawn + handshake at startup, same cost as the
+  old eager init).
+- **Web UI parity**: the web front-end reads the same host via
+  `make_session`, but has no `/plugins`-equivalent panel yet.

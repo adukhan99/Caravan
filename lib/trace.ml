@@ -25,6 +25,11 @@ type event =
   | Log              of { level : string; message : string }
   | Subagent_start   of { name : string; task : string }
   | Subagent_end     of { name : string; summary : string }
+  | Plugin_transition of { name : string; uid : int; state : string }
+      (** a plugin fiber changed lifecycle state (see [Plugin]) *)
+  | Run_error        of { origin : string; message : string }
+      (** a provider/tool/run failure surfaced to the user — recorded so
+          failed sessions are auditable, not only successful ones *)
 
 type sink = event -> unit
 
@@ -43,6 +48,12 @@ let with_sink s f =
 let emit ev = List.iter (fun s -> try s ev with _ -> ()) !sinks
 
 let log level fmt = Printf.ksprintf (fun m -> emit (Log { level; message = m })) fmt
+
+(** Record a user-surfaced failure. Use at REPL/agent catch sites in
+    place of printing directly: the renderer prints it (in red, even in
+    quiet mode) and the JSONL sink makes the failure auditable. *)
+let error origin fmt =
+  Printf.ksprintf (fun m -> emit (Run_error { origin; message = m })) fmt
 
 (* ── JSONL transcript sink ────────────────────────────────────────────── *)
 
@@ -76,6 +87,10 @@ let event_to_json ev : Yojson.Safe.t =
     base "subagent_start" [("name", `String name); ("task", `String task)]
   | Subagent_end { name; summary } ->
     base "subagent_end" [("name", `String name); ("summary", `String summary)]
+  | Plugin_transition { name; uid; state } ->
+    base "plugin_transition" [("name", `String name); ("uid", `Int uid); ("state", `String state)]
+  | Run_error { origin; message } ->
+    base "error" [("origin", `String origin); ("message", `String message)]
 
 (** A sink that appends one JSON object per event to [oc], flushing eagerly
     so transcripts survive crashes. *)

@@ -32,6 +32,10 @@ val clear : t -> t
 val add_messages : t -> chat_message list -> t
 val with_provider : t -> Provider.packed_provider -> t
 val tools : t -> Tool.packed_tool list
+
+val with_tools : t -> Tool.packed_tool list -> t
+(** Replace the session's tool set (e.g. after the plugin composition
+    changed) without touching history or options. *)
 val config : t -> config
 val provider : t -> Provider.packed_provider
 val turn_idx : t -> int

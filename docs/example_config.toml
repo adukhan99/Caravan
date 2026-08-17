@@ -115,6 +115,16 @@ redis = ["Querying store", "Accessing cache"]
 # Brave Search API Key for the `web_search` tool
 search_api_key = "bs-..."
 
+# --- Plugins (optional) ---
+# Tool composition runs on the plugin runtime (docs/src/plugins.md).
+# Without [[plugins]] entries the default applies: built-in tools plus
+# one MCP mount per [[mcp.servers]] entry below. Declare entries to
+# take control — they merge over the defaults by id:
+#
+# [[plugins]]
+# plugin  = "tools.builtin"
+# exclude = ["bash"]           # drop tools by name
+
 # --- Model Context Protocol (MCP) Servers ---
 # Define external tool integrations using [[mcp.servers]]
 [[mcp.servers]]

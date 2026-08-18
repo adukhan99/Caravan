@@ -43,6 +43,7 @@ Typing `/` opens a live palette (Tab completes). Highlights:
 | `/system` `/temp` `/top_p` `/top_k` `/max_tokens` `/seed` `/stop` | generation |
 | `/memory <n>` · `/summarise` | context window / compact now |
 | `/history` · `/export [file]` · `/tools` | inspect the session |
+| `/plugins [enable\|disable <id>]` | plugin composition and lifecycle states |
 | `/doctor` · `/init` | pre-run commands, callable in-session |
 | `/clear` · `/help` · `/quit` | housekeeping |
 

@@ -46,6 +46,11 @@ Built on OCaml 5 algebraic effects and Eio. *"Correct, efficient, beautiful."*
 - **Typed all the way down** — pipelines are `'a -> ('b, string) result`
   functions, tools are first-class modules with typed inputs/outputs,
   providers and memories are packed existentials.
+- **A real plugin runtime** — `Caravan.Plugin` implements DeepSeek/PKU's
+  spatiotemporal-composability model (the Cordis/dsh foundation):
+  components load, unload, and rewire at runtime with tracked, revertible
+  effects and reactive typed service injection
+  ([docs/src/plugins.md](docs/src/plugins.md)).
 
 ---
 
@@ -222,6 +227,7 @@ the tool calls that produced it, plus token usage.
 | `/temp` `/top_p` `/top_k` `/max_tokens` `/seed` `/stop` | generation options |
 | `/memory <n>` · `/summarise` | context window size / compact now |
 | `/history` · `/export [file]` · `/tools` · `/config` | inspect the session |
+| `/plugins [enable\|disable <id>]` | plugin composition, live |
 | `/help` · `/quit` | you know these |
 
 ---
@@ -352,7 +358,10 @@ Library features:
   tool for orchestrator models (see the two swarm examples in
   [`examples/`](examples/));
 - **Pluggable memory** — sliding window, summary, hierarchical, Redis;
-- **Typed parsers & templates** — turn model text into OCaml values.
+- **Typed parsers & templates** — turn model text into OCaml values;
+- **Plugin runtime** — revertible effects, reactive service injection,
+  component lifecycles, isolation realms, and declarative reconciliation
+  (`Caravan.Plugin`; see the [plugin_system example](examples/plugin_system/)).
 
 ## Architecture
 
@@ -400,6 +409,7 @@ flowchart TB
 - **`Caravan.Agent`** — autonomous loops;
 - **`Caravan.Trace`** — the event stream everything reports into;
 - **`Caravan.Tool` / `Caravan.Effects`** — effect-based tool dispatch;
+- **`Caravan.Plugin`** — the spatiotemporal-composability plugin runtime;
 - **`Caravan.Tls`** — the single, certificate-verifying HTTPS path;
 - **`CaravanProviders.Registry`** — the provider table.
 
@@ -413,9 +423,9 @@ dune build @doc     # odoc API docs (needs odoc installed)
 
 CI builds and tests on OCaml 5.2 and 5.3
 ([.github/workflows/ci.yml](.github/workflows/ci.yml)) and checks that
-`Caravan.opam` stays in sync with `dune-project`. The overhaul's design
-notes and pain-point log live in
-[docs/OVERHAUL_NOTES.md](docs/OVERHAUL_NOTES.md).
+`Caravan.opam` stays in sync with `dune-project`. The composability
+backend's design notes and friction log live in
+[docs/COMPOSABILITY_NOTES.md](docs/COMPOSABILITY_NOTES.md).
 
 ## License
 

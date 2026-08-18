@@ -231,6 +231,9 @@ type subagent_config = {
   temperature   : float option;
   tool_names    : string list; (** validated against registered tools at startup *)
   system_prompt : string;
+  realm         : string option;
+  (** Optional plugin-toolset sandbox realm: plugins registered into the
+      named realm add worker-only tools resolved at delegation time. *)
   gres          : gres;
 }
 
@@ -301,6 +304,60 @@ let assoc_float_opt fields key =
   | Some (Otoml.TomlInteger n) -> Some (float_of_int n)
   | _ -> None
 
+(* ── [[plugins]] — declarative plugin composition ─────────────────────── *)
+
+(** One [[plugins]] entry: a declarative request for a plugin
+    instantiation, reconciled by the harness (see [Plugin_host]). *)
+type plugin_config = {
+  id      : string;          (** stable identity; defaults to [plugin] *)
+  plugin  : string;          (** builder name in the host's registry *)
+  enabled : bool;            (** default [true] *)
+  config  : Yojson.Safe.t;   (** the whole entry table, as JSON *)
+}
+
+(** Best-effort TOML→JSON for plugin configs. Dates and other exotic
+    values render as strings. *)
+let rec toml_to_json (v : Otoml.t) : Yojson.Safe.t =
+  match v with
+  | Otoml.TomlString s -> `String s
+  | Otoml.TomlInteger n -> `Int n
+  | Otoml.TomlFloat f -> `Float f
+  | Otoml.TomlBoolean b -> `Bool b
+  | Otoml.TomlArray l | Otoml.TomlTableArray l -> `List (List.map toml_to_json l)
+  | Otoml.TomlTable fields | Otoml.TomlInlineTable fields ->
+    `Assoc (List.map (fun (k, v) -> (k, toml_to_json v)) fields)
+  | other -> (try `String (Otoml.Printer.to_string other) with _ -> `Null)
+
+(** Read all [[plugins]] entries. Entries missing a [plugin] name are
+    dropped. An absent table yields [] — the harness then synthesizes
+    its default composition (built-in tools + [[mcp.servers]]). *)
+let get_plugins () =
+  match get_ast () with
+  | None -> []
+  | Some ast ->
+    try
+      let node = Otoml.find ast (fun x -> x) ["plugins"] in
+      let elements =
+        match node with
+        | Otoml.TomlArray l | Otoml.TomlTableArray l -> l
+        | _ -> []
+      in
+      List.filter_map (fun item ->
+        match item with
+        | Otoml.TomlTable fields | Otoml.TomlInlineTable fields ->
+          (match assoc_string_opt fields "plugin" with
+           | None -> None
+           | Some plugin ->
+             Some {
+               id = Option.value ~default:plugin (assoc_string_opt fields "id");
+               plugin;
+               enabled = assoc_bool fields "enabled" true;
+               config = toml_to_json (Otoml.TomlTable fields);
+             })
+        | _ -> None
+      ) elements
+    with _ -> []
+
 (** Read a [gres.*] sub-table from a [[subagents]] entry. *)
 let parse_gres fields =
   match List.assoc_opt "gres" fields with
@@ -352,6 +409,7 @@ let get_subagents () =
                temperature   = assoc_float_opt fields "temperature";
                tool_names    = get_strl "tools";
                system_prompt = Option.value ~default:"" (get_str "system_prompt");
+               realm         = get_str "realm";
                gres          = parse_gres fields;
              }
            | _ -> None)
@@ -575,6 +633,7 @@ let editable_subagent_fields : (string * string * string * bool) list = [
   ("role",          "Worker role",    "atomic | parallel",   false);
   ("max_tokens",    "Max tokens",     "integer",             false);
   ("temperature",   "Temperature",    "0.0 – 2.0",          false);
+  ("realm",         "Sandbox realm",  "plugin toolset realm name", false);
 ]
 
 (** Append a new [[subagents]] entry to the config file.
@@ -620,6 +679,9 @@ let add_subagent (fields : (string * string) list) : (string, string) result =
          | _ -> ());
         (match lookup "role" with
          | Some r when r <> "" -> pairs := !pairs @ [("role", Otoml.string r)]
+         | _ -> ());
+        (match lookup "realm" with
+         | Some r when r <> "" -> pairs := !pairs @ [("realm", Otoml.string r)]
          | _ -> ());
         (match lookup "max_tokens" with
          | Some mt when mt <> "" ->
@@ -706,5 +768,6 @@ let subagent_to_json (cfg : subagent_config) : Yojson.Safe.t =
     ("tools",         `List (List.map (fun t -> `String t) cfg.tool_names));
     ("max_tokens",    (match cfg.max_tokens with Some n -> `Int n | None -> `Null));
     ("temperature",   (match cfg.temperature with Some f -> `Float f | None -> `Null));
+    ("realm",         (match cfg.realm with Some r -> `String r | None -> `Null));
   ]
 

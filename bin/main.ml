@@ -19,19 +19,21 @@ let base_tools () =
     List.filter (fun t -> Tool.name_of_packed t <> "bash") base
   else base
 
-let all_tools_ref : Tool.packed_tool list option ref = ref None
+(* The plugin host owns the live tool composition: built-in tools and
+   MCP mounts run as plugin fibers (config: [[plugins]], defaulting to
+   the classic built-ins + [[mcp.servers]] composition). *)
+let host = lazy (
+  let h = Plugin_host.create ~builtin_tools:base_tools () in
+  Plugin_host.load h;
+  h)
 
-let all_tools () =
-  match !all_tools_ref with
-  | Some ts -> ts
-  | None -> base_tools ()
+let all_tools () = Plugin_host.tools (Lazy.force host)
 
-let init_mcp () =
-  let configs = Config.get_mcp_servers () in
-  if configs <> [] then begin
-    let mcp = Caravan.Mcp.init_mcp_servers configs in
-    all_tools_ref := Some (base_tools () @ mcp)
-  end
+(** (Re)compose the plugin set from config. Safe to call repeatedly —
+    reconciliation only touches entries that changed. *)
+let init_plugins () =
+  if Lazy.is_val host then Plugin_host.load (Lazy.force host)
+  else ignore (Lazy.force host)
 
 (* ── Front-end plumbing: renderer, transcript, permissions ────────────── *)
 
@@ -97,7 +99,8 @@ let resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli =
     config-declared delegate tool when subagents are enabled. *)
 let make_session ~net ~clock ~provider_name ~model ~base_url ~system =
   let provider = resolve_provider_or_exit ~provider_name ~model ~base_url in
-  let tools = Subagents.session_tools ~net ~clock (all_tools ()) in
+  Plugin_host.set_provider (Lazy.force host) provider;
+  let tools = Subagents.session_tools ~net ~clock ~host:(Lazy.force host) (all_tools ()) in
   let sess = Session.create ~tools model provider in
   match system with Some s -> Session.set_system sess s | None -> sess
 
@@ -152,6 +155,7 @@ let help_groups = [
       ("/history", "Show conversation so far", None);
       ("/export [file]", "Save conversation to a file", None);
       ("/tools", "List available tools for the agent", None);
+      ("/plugins", "List composed plugins; enable/disable by id", None);
       ("/config", "Show current settings", None);
       ("/config set <k> <v>", "Change a setting, saved to the config file",
        Some "Example: /config set permissions ask   (/config keys lists them)");
@@ -232,6 +236,7 @@ let switch_model st new_model =
       ~model:new_model ~base_url:st.base_url
   in
   st.provider <- provider;
+  Plugin_host.set_provider (Lazy.force host) provider;
   st.session <- Session.with_provider (Session.with_model st.session new_model) provider
 
 let print_providers_table active =
@@ -298,8 +303,10 @@ let handle_slash_command net clock st line =
           end;
           println_ansi (dim ("  " ^ Monitor.format_usage res))
         | Error e ->
+          Trace.error "repl-agent" "%s" e;
           println_ansi (red (Printf.sprintf "  ✗ agent: %s" e))
       with exn ->
+        Trace.error "repl-agent" "%s" (Caravan_error.humanize exn);
         println_ansi (red (Printf.sprintf "  ✗ %s" (Caravan_error.humanize exn))))
     end
 
@@ -341,6 +348,7 @@ let handle_slash_command net clock st line =
           let provider =
             resolve_provider_or_exit ~provider_name:e.name ~model ~base_url in
           st.provider <- provider;
+          Plugin_host.set_provider (Lazy.force host) provider;
           st.session <- Session.with_provider (Session.with_model st.session model) provider;
           confirm "Provider → %s (model %s)" e.name model)
      | [] -> usage "/provider" "<name> [url]")
@@ -381,6 +389,7 @@ let handle_slash_command net clock st line =
          confirm "Context compacted";
          println_ansi (dim (Printf.sprintf "  %s" summary))
        with exn ->
+         Trace.error "summarize" "%s" (Caravan_error.humanize exn);
          println_ansi (red (Printf.sprintf "  ✗ summarize: %s" (Caravan_error.humanize exn))))
     end
 
@@ -463,7 +472,14 @@ let handle_slash_command net clock st line =
           (Printf.sprintf "%-28s" (white (truncate_visible cfg.model 28)))
           (dim provider_status));
         if cfg.tool_names <> [] then
-          println_ansi (dim (Printf.sprintf "      tools: %s" (String.concat ", " cfg.tool_names)))
+          println_ansi (dim (Printf.sprintf "      tools: %s" (String.concat ", " cfg.tool_names)));
+        (match cfg.realm with
+         | Some realm ->
+           let sandbox = Plugin_host.realm_tools (Lazy.force host) ~realm in
+           println_ansi (dim (Printf.sprintf "      realm: %s (%d sandbox tool%s)"
+             realm (List.length sandbox)
+             (if List.length sandbox = 1 then "" else "s")))
+         | None -> ())
       ) roster;
       print_newline ();
       if not (Subagents.enabled ()) then
@@ -488,6 +504,47 @@ let handle_slash_command net clock st line =
       ) tools;
       println_ansi (dim "\n  ✎ = can modify state (governed by /permissions)")
     end
+
+  | "/plugins" :: rest ->
+    let h = Lazy.force host in
+    (match rest with
+     | [] ->
+       let entries = Plugin_host.entries h in
+       if entries = [] then println_ansi (dim "  No plugins composed.")
+       else begin
+         println_ansi (rule ~title:"Plugins" ());
+         List.iter (fun (e : Config.plugin_config) ->
+           let fiber = Plugin_host.fiber h e.id in
+           let state = match fiber with
+             | Some f ->
+               Format.asprintf "%a" Plugin.Fiber.pp_state (Plugin.Fiber.state f)
+             | None -> if e.enabled then "not instantiated" else "disabled"
+           in
+           let mark = match fiber with
+             | Some f when Plugin.Fiber.state f = Plugin.Fiber.Active -> green " ● "
+             | Some f when Plugin.Fiber.state f = Plugin.Fiber.Failed -> red " ✗ "
+             | _ -> dim " ○ "
+           in
+           println_ansi (Printf.sprintf "  %s%s %s"
+             mark (cyan (Printf.sprintf "%-18s" e.id))
+             (dim (Printf.sprintf "(%s · %s)" e.plugin state)));
+           (match Option.bind fiber Plugin.Fiber.error with
+            | Some exn ->
+              println_ansi (red (Printf.sprintf "        %s" (Caravan_error.humanize exn)))
+            | None -> ())
+         ) entries;
+         println_ansi
+           (dim "\n  /plugins enable|disable <id> (session-only) · declared via [[plugins]] in config")
+       end
+     | [action; id] when action = "enable" || action = "disable" ->
+       (match Plugin_host.set_enabled h ~id (action = "enable") with
+        | Ok () ->
+          st.session <-
+            Session.with_tools st.session
+              (Subagents.session_tools ~net ~clock ~host:h (all_tools ()));
+          confirm "plugin '%s' %sd" id action
+        | Error e -> println_ansi (red ("  ✗ " ^ e)))
+     | _ -> usage "/plugins" "[enable|disable <id>]")
 
   | "/config" :: "set" :: key :: rest when rest <> [] ->
     let value = String.concat " " rest in
@@ -633,6 +690,7 @@ let palette : Editor.command_info list =
     c "/history" "" "show the conversation so far";
     c "/export" "[file]" "save the conversation as JSON";
     c "/tools" "" "available tools (✎ = mutating)";
+    c "/plugins" "[enable|disable <id>]" "plugin composition and lifecycle states";
     c "/config" "[set k v | get k | keys]" "show or edit settings";
     c "/key" "<provider>" "store an API key (hidden input)";
     c "/doctor" "" "run diagnostics";
@@ -704,6 +762,7 @@ let repl net clock st =
         if not is_tty && stream_enabled then print_newline ()
       with exn ->
         if is_tty then print_newline ();
+        Trace.error "repl" "%s" (Caravan_error.humanize exn);
         println_ansi (red (Printf.sprintf "\n  ✗ %s" (Caravan_error.humanize exn))));
       loop ()
     end
@@ -736,7 +795,7 @@ let verbose_arg =
 (* ── repl command ─────────────────────────────────────────────────────── *)
 
 let run_repl model_cli provider_cli base_url_cli system verbose =
-  init_mcp ();
+  init_plugins ();
   let transcript = setup_frontend ~verbose () in
   let (provider_name, model, base_url) =
     resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
@@ -781,7 +840,7 @@ let repl_cmd =
 (* ── agent command (one-shot autonomy) ────────────────────────────────── *)
 
 let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_out verbose task =
-  init_mcp ();
+  init_plugins ();
   let quiet = quiet || json_out in
   let transcript = setup_frontend ~quiet ~verbose () in
   let (provider_name, model, base_url) =
@@ -823,6 +882,7 @@ let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_ou
       end
     | Error e ->
       exit_code := 1;
+      Trace.error "agent" "%s" e;
       let msg = Agent_output.format_error ~mode ~message:e ~transcript in
       if json_out then
         print_endline msg
@@ -880,7 +940,7 @@ let run_cmd =
 (* ── complete command ─────────────────────────────────────────────────── *)
 
 let run_complete model_cli provider_cli base_url_cli system verbose prompt_text =
-  init_mcp ();
+  init_plugins ();
   let _transcript = setup_frontend ~verbose () in
   let (provider_name, model, base_url) =
     resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli
@@ -903,6 +963,7 @@ let run_complete model_cli provider_cli base_url_cli system verbose prompt_text 
       print_newline ();
       if is_tty then println_ansi (dim ("  " ^ Monitor.format_usage result))
     with exn ->
+      Trace.error "complete" "%s" (Caravan_error.humanize exn);
       Printf.eprintf "[Caravan] Error: %s\n%!" (Caravan_error.humanize exn);
       exit 1)
   )
@@ -1224,7 +1285,7 @@ let config_cmd =
 (* ── web command ──────────────────────────────────────────────────────── *)
 
 let run_web model_cli provider_cli base_url_cli system port =
-  init_mcp ();
+  init_plugins ();
   let _transcript = setup_frontend ~quiet:true () in
   let (provider_name, model, base_url) =
     resolve_cli_spec ~provider_cli ~model_cli ~base_url_cli

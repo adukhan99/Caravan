@@ -84,9 +84,25 @@ let build_spec ~(registered_tools : Tool.packed_tool list)
       model          = Some cfg.model;
     }
 
+(** Dispatch-time sandbox tools: a worker declared with [realm = "r"]
+    resolves the plugin toolset of realm [r] at every delegation, so
+    plugins registered into the realm add (or withdraw) worker-only
+    tools without rebuilding the delegate. *)
+let live_tools ~host (configs : Config.subagent_config list) =
+  let realm_of =
+    List.filter_map
+      (fun (cfg : Config.subagent_config) ->
+        Option.map (fun r -> (cfg.name, r)) cfg.realm)
+      configs
+  in
+  fun worker ->
+    match List.assoc_opt worker realm_of with
+    | Some realm -> Plugin_host.realm_tools host ~realm
+    | None -> []
+
 (** Build the delegate tool from config, if subagents are declared and
     enabled. Returns [None] (and logs why) otherwise. *)
-let delegate_tool ~net ~clock ~(registered_tools : Tool.packed_tool list) () =
+let delegate_tool ~net ~clock ~host ~(registered_tools : Tool.packed_tool list) () =
   let configs = Config.get_subagents () in
   if configs = [] then None
   else if not (enabled ()) then begin
@@ -111,14 +127,15 @@ let delegate_tool ~net ~clock ~(registered_tools : Tool.packed_tool list) () =
         (List.length specs)
         (String.concat ", " (List.map (fun (s : Subagent.subagent_spec) -> s.name) specs));
       Some (CaravanTools.Delegate.make ~net ~clock ~registered_tools
-              ~subagent_specs:specs)
+              ~live_tools:(live_tools ~host configs)
+              ~subagent_specs:specs ())
     end
   end
 
 (** Session tool set: static + MCP tools plus the delegate tool when
     configured. Call inside [Eio_main.run]. *)
-let session_tools ~net ~clock base_tools =
-  match delegate_tool ~net ~clock ~registered_tools:base_tools () with
+let session_tools ~net ~clock ~host base_tools =
+  match delegate_tool ~net ~clock ~host ~registered_tools:base_tools () with
   | Some d -> base_tools @ [d]
   | None -> base_tools
 

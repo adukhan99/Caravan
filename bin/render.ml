@@ -66,6 +66,15 @@ let render opts ev =
       let sum_preview = if opts.verbose then String.trim summary else Ui.truncate_visible (String.trim summary) 60 in
       println (Printf.sprintf "  %s %s %s"
                  (Ui.dim "  ⎿ [subagent:") (Ui.dim name) (Ui.dim (Printf.sprintf "] complete: %s" sum_preview)))
+  | Plugin_transition { name; uid = _; state } ->
+    (* Lifecycle chatter is verbose-only; the transcript records it always. *)
+    if opts.verbose && not opts.quiet then
+      println (Ui.dim (Printf.sprintf "  [plugin] %s → %s" name state))
+  | Run_error { origin = _; message = _ } ->
+    (* The catch sites that emit this already print the failure to the
+       terminal in their own format; the event exists so the JSONL
+       transcript records failed sessions too. Render nothing. *)
+    ()
 
 (** Install the renderer; returns unit. Options are read through a ref so
     the REPL can flip streaming/quiet at runtime without reinstalling. *)

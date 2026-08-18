@@ -43,7 +43,9 @@ test/       inline test suite (ppx_expect / ppx_inline_test)
   mutating if it changes state.
 - New provider → registry entry, or a `PROVIDER` module for exotic APIs.
 - Anything user-visible → emit `Trace` events, never print from `lib/`.
+- New plugin / dynamic component → [Plugins](plugins.md); go through
+  the context (`track`, `provide`, `on`) so unloading stays revertible.
 - Keep the pain-point log honest:
-  [`docs/OVERHAUL_NOTES.md`](https://github.com/adukhan99/Caravan/blob/main/docs/OVERHAUL_NOTES.md)
-  records what was fixed, what is experimental, and why decisions fell
+  [`docs/COMPOSABILITY_NOTES.md`](https://github.com/adukhan99/Caravan/blob/main/docs/COMPOSABILITY_NOTES.md)
+  records friction, divergences from the paper, and why decisions fell
   the way they did.

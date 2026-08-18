@@ -316,6 +316,7 @@ let%test_unit "delegate_tool_validation_and_dispatch" =
         ~clock:env#clock
         ~registered_tools:registered
         ~subagent_specs:[valid_spec]
+        ()
     in
     assert (Tool.name_of_packed delegate_tool = "delegate");
 
@@ -1549,7 +1550,7 @@ let%test_unit "delegate_batch_parallel_execution" =
       tools = [finish_tool]; provider = Some provider; model = Some "mock";
     } in
     let delegate_tool = CaravanTools.Delegate.make ~net:env#net ~clock:env#clock
-      ~registered_tools:[finish_tool] ~subagent_specs:[spec_a; spec_b] in
+      ~registered_tools:[finish_tool] ~subagent_specs:[spec_a; spec_b] () in
     
     (* Batch JSON payload *)
     let batch_args = {|{

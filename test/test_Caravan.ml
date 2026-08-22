@@ -1614,5 +1614,32 @@ let%test_unit "parse_utf8_sanitization" =
   let round_tripped = Yojson.Safe.from_string wire_str in
   assert (round_tripped <> `Null)
 
+let%test_unit "parse_provider_error_openrouter_and_openai" =
+  let openrouter_body =
+    {|{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"ERROR","provider_name":"Stealth","is_byok":false}},"user_id":"user_123"}|}
+  in
+  (match Caravan_error.parse_provider_error openrouter_body with
+   | Some detail ->
+     assert (detail.provider_name = Some "Stealth");
+     assert (detail.code = Some "400");
+     assert (detail.message = "Provider returned error");
+     assert (detail.raw = Some "ERROR");
+     assert (detail.user_id = Some "user_123");
+     let exn = Caravan_error.Provider_failure { provider = "openai"; status = 400; body = openrouter_body; detail = Some detail } in
+     let h = Caravan_error.humanize exn in
+     assert (Re.execp (Re.compile (Re.str "Stealth")) h);
+     assert (Re.execp (Re.compile (Re.str "Provider returned error")) h)
+   | None -> failwith "Failed to parse OpenRouter provider error");
+
+  let openai_err =
+    {|{"error":{"message":"Incorrect API key","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}|}
+  in
+  (match Caravan_error.parse_provider_error openai_err with
+   | Some detail ->
+     assert (detail.code = Some "invalid_api_key");
+     assert (detail.message = "Incorrect API key")
+   | None -> failwith "Failed to parse OpenAI provider error")
+
+
 
 

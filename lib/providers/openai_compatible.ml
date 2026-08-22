@@ -146,6 +146,18 @@ let parse_complete_response body_str provider_name model =
   let reply_msg = make_message ?tool_calls ?extra_content Assistant content in
   wrap_result ~raw_response:body_str ~model ~provider:provider_name ?finish_reason:finish ?usage reply_msg
 
+let log_structured_error provider_name status body_str =
+  match Caravan.Caravan_error.parse_provider_error body_str with
+  | Some detail ->
+    let p_name = Option.value ~default:provider_name detail.provider_name in
+    let code_str = Option.value ~default:(string_of_int status) detail.code in
+    let raw_str = match detail.raw with Some r -> Printf.sprintf ", raw: %s" r | None -> "" in
+    let user_str = match detail.user_id with Some u -> Printf.sprintf ", user_id: %s" u | None -> "" in
+    Caravan.Trace.log "debug" "[%s] Upstream provider '%s' returned HTTP %s: %s%s%s"
+      provider_name p_name code_str detail.message raw_str user_str
+  | None ->
+    Caravan.Trace.log "debug" "[%s] Provider returned HTTP %d: %s" provider_name status body_str
+
 let complete net cfg ?model ?options ?tools msgs =
   let effective_model = Option.value ~default:cfg.model model in
   let uri      = Uri.of_string (cfg.base_url ^ cfg.chat_path) in
@@ -161,129 +173,149 @@ let complete net cfg ?model ?options ?tools msgs =
   let resp_body = read_body body in
   if status >= 200 && status < 300 then
     parse_complete_response resp_body cfg.provider_name effective_model
-  else
-    failwith (Printf.sprintf "%s error %d: %s" cfg.provider_name status resp_body)
+  else begin
+    log_structured_error cfg.provider_name status resp_body;
+    Caravan.Caravan_error.raise_provider_failure ~provider:cfg.provider_name ~status ~body:resp_body
+  end
 
 let stream net cfg ?model ?options ?tools msgs ~on_token =
   let effective_model = Option.value ~default:cfg.model model in
   let uri      = Uri.of_string (cfg.base_url ^ cfg.chat_path) in
   let headers  = Http.Header.of_list (("Accept", "text/event-stream") :: auth_headers cfg) in
   let body_str = Yojson.Safe.to_string (make_body cfg ?model ?options ?tools msgs ~stream:true) in
-  let buf      = Buffer.create 4096 in
-  let tool_acc : (int, string * string * Buffer.t * Yojson.Safe.t option) Hashtbl.t = Hashtbl.create 4 in
-  let extra_content_ref = ref None in
-  let usage_ref = ref None in
-  let result_ref = ref None in
   let client   = make_client net uri in
-  Eio.Switch.run @@ fun sw ->
-  let (resp, body) =
-    Cohttp_eio.Client.post client ~sw ~headers
-      ~body:(Cohttp_eio.Body.of_string body_str) uri
+  let tokens_emitted = ref false in
+  let wrapped_on_token token =
+    tokens_emitted := true;
+    on_token token
   in
-  let status = Http.Response.status resp |> Http.Status.to_int in
-  if status < 200 || status >= 300 then begin
-    let err = read_body body in
-    failwith (Printf.sprintf "%s stream error %d: %s" cfg.provider_name status err)
-  end;
-  let buf_r = Eio.Buf_read.of_flow body ~max_size:max_int in
-  (try
-    while true do
-      let line = String.trim (Eio.Buf_read.line buf_r) in
-      if String.length line > 6 && String.sub line 0 6 = "data: " then begin
-        let data = String.sub line 6 (String.length line - 6) in
-        if data = "[DONE]" then begin
-          let full = Buffer.contents buf in
-          let tool_calls =
-            if Hashtbl.length tool_acc = 0 then None
-            else begin
-              let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
-              let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-               Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
-                 { id; name; args = Caravan.Types.sanitize_json_args (Buffer.contents abuf); extra_content = tc_ec }
-               ) sorted)
-            end
-          in
-          let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
-          result_ref := Some (wrap_result ~raw_response:full ~model:effective_model
-            ~provider:cfg.provider_name ?usage:(!usage_ref) reply);
-          raise End_of_file
-        end else begin
-          (try
-            let json = Yojson.Safe.from_string data in
-            let open Yojson.Safe.Util in
-            (match json |> member "usage" with
-             | `Assoc _ -> usage_ref := parse_usage json
-             | _ -> ());
-            let choices = json |> member "choices" in
-            if choices <> `Null && choices <> `List [] then begin
-              let delta = choices |> index 0 |> member "delta" in
-              (match delta |> member "extra_content" with
-               | `Null -> ()
-               | ec -> extra_content_ref := Some ec);
-              (match delta |> member "content" with
-               | `String token ->
-                 Buffer.add_string buf token;
-                 on_token token
-               | _ -> ());
-              (match delta |> member "tool_calls" with
-               | `List tcs ->
-                 List.iter (fun tc ->
-                   let idx = tc |> member "index" |> to_int in
-                   let (id, name, abuf, tc_ec) =
-                     match Hashtbl.find_opt tool_acc idx with
-                     | Some existing -> existing
-                     | None ->
-                       let entry = ("", "", Buffer.create 64, None) in
-                       Hashtbl.add tool_acc idx entry;
-                       entry
-                     in
-                   let new_id =
-                     match tc |> member "id" with
-                     | `String s when s <> "" -> s
-                     | _ -> id
-                   in
-                   let new_ec =
-                     match tc |> member "extra_content" with
-                     | `Null -> tc_ec
-                     | ec -> Some ec
-                   in
-                   let fn = tc |> member "function" in
-                   let new_name =
-                     match fn |> member "name" with
-                     | `String s when s <> "" -> s
-                     | _ -> name
-                   in
-                   (match fn |> member "arguments" with
-                    | `String s -> Buffer.add_string abuf s
-                    | _ -> ());
-                   Hashtbl.replace tool_acc idx (new_id, new_name, abuf, new_ec)
-                 ) tcs
-               | _ -> ())
-            end
-          with exn ->
-            Printf.eprintf "[%s Stream Parse Error]: %s\nData: %s\n%!"
-              cfg.provider_name (Printexc.to_string exn) data)
-        end
-      end
-    done
-  with End_of_file -> ());
-  match !result_ref with
-  | Some r -> r
-  | None ->
-    let full = Buffer.contents buf in
-    let tool_calls =
-      if Hashtbl.length tool_acc = 0 then None
-      else begin
-        let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
-        let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
-        Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
-          { id; name; args = Caravan.Types.sanitize_json_args (Buffer.contents abuf); extra_content = tc_ec }
-        ) sorted)
-      end
+  let try_stream () =
+    let buf      = Buffer.create 4096 in
+    let tool_acc : (int, string * string * Buffer.t * Yojson.Safe.t option) Hashtbl.t = Hashtbl.create 4 in
+    let extra_content_ref = ref None in
+    let usage_ref = ref None in
+    let result_ref = ref None in
+    Eio.Switch.run @@ fun sw ->
+    let (resp, body) =
+      Cohttp_eio.Client.post client ~sw ~headers
+        ~body:(Cohttp_eio.Body.of_string body_str) uri
     in
-    let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
-    wrap_result ~raw_response:full ~model:effective_model ~provider:cfg.provider_name
-      ?usage:(!usage_ref) reply
+    let status = Http.Response.status resp |> Http.Status.to_int in
+    if status < 200 || status >= 300 then begin
+      let err = read_body body in
+      log_structured_error cfg.provider_name status err;
+      Caravan.Caravan_error.raise_provider_failure ~provider:cfg.provider_name ~status ~body:err
+    end;
+    let buf_r = Eio.Buf_read.of_flow body ~max_size:max_int in
+    (try
+      while true do
+        let line = String.trim (Eio.Buf_read.line buf_r) in
+        if String.length line > 6 && String.sub line 0 6 = "data: " then begin
+          let data = String.sub line 6 (String.length line - 6) in
+          if data = "[DONE]" then begin
+            let full = Buffer.contents buf in
+            let tool_calls =
+              if Hashtbl.length tool_acc = 0 then None
+              else begin
+                let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
+                let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
+                 Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
+                   { id; name; args = Caravan.Types.sanitize_json_args (Buffer.contents abuf); extra_content = tc_ec }
+                 ) sorted)
+              end
+            in
+            let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
+            result_ref := Some (wrap_result ~raw_response:full ~model:effective_model
+              ~provider:cfg.provider_name ?usage:(!usage_ref) reply);
+            raise End_of_file
+          end else begin
+            (try
+              let json = Yojson.Safe.from_string data in
+              let open Yojson.Safe.Util in
+              (match json |> member "usage" with
+               | `Assoc _ -> usage_ref := parse_usage json
+               | _ -> ());
+              let choices = json |> member "choices" in
+              if choices <> `Null && choices <> `List [] then begin
+                let delta = choices |> index 0 |> member "delta" in
+                (match delta |> member "extra_content" with
+                 | `Null -> ()
+                 | ec -> extra_content_ref := Some ec);
+                (match delta |> member "content" with
+                 | `String token ->
+                   Buffer.add_string buf token;
+                   wrapped_on_token token
+                 | _ -> ());
+                (match delta |> member "tool_calls" with
+                 | `List tcs ->
+                   List.iter (fun tc ->
+                     let idx = tc |> member "index" |> to_int in
+                     let (id, name, abuf, tc_ec) =
+                       match Hashtbl.find_opt tool_acc idx with
+                       | Some existing -> existing
+                       | None ->
+                         let entry = ("", "", Buffer.create 64, None) in
+                         Hashtbl.add tool_acc idx entry;
+                         entry
+                       in
+                     let new_id =
+                       match tc |> member "id" with
+                       | `String s when s <> "" -> s
+                       | _ -> id
+                     in
+                     let new_ec =
+                       match tc |> member "extra_content" with
+                       | `Null -> tc_ec
+                       | ec -> Some ec
+                     in
+                     let fn = tc |> member "function" in
+                     let new_name =
+                       match fn |> member "name" with
+                       | `String s when s <> "" -> s
+                       | _ -> name
+                     in
+                     (match fn |> member "arguments" with
+                      | `String s -> Buffer.add_string abuf s
+                      | _ -> ());
+                     Hashtbl.replace tool_acc idx (new_id, new_name, abuf, new_ec)
+                   ) tcs
+                 | _ -> ())
+              end
+            with exn ->
+              Printf.eprintf "[%s Stream Parse Error]: %s\nData: %s\n%!"
+                cfg.provider_name (Printexc.to_string exn) data)
+          end
+        end
+      done
+    with End_of_file -> ());
+    match !result_ref with
+    | Some r -> r
+    | None ->
+      let full = Buffer.contents buf in
+      let tool_calls =
+        if Hashtbl.length tool_acc = 0 then None
+        else begin
+          let pairs = Hashtbl.fold (fun idx v acc -> (idx, v) :: acc) tool_acc [] in
+          let sorted = List.sort (fun (a,_) (b,_) -> compare a b) pairs in
+          Some (List.map (fun (_, (id, name, abuf, tc_ec)) ->
+            { id; name; args = Caravan.Types.sanitize_json_args (Buffer.contents abuf); extra_content = tc_ec }
+          ) sorted)
+        end
+      in
+      let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
+      wrap_result ~raw_response:full ~model:effective_model ~provider:cfg.provider_name
+        ?usage:(!usage_ref) reply
+  in
+  try
+    try_stream ()
+  with
+  | Eio.Cancel.Cancelled _ as exn -> raise exn
+  | exn when not !tokens_emitted ->
+    let human_err = Caravan.Caravan_error.humanize exn in
+    let single_line_err = String.concat " " (String.split_on_char '\n' human_err) in
+    Caravan.Trace.log "warn" "[%s] Streaming failed; falling back to non-streaming completion... (%s)"
+      cfg.provider_name single_line_err;
+    complete net cfg ?model ?options ?tools msgs
 
 (** List models. Transport failures (connection refused, TLS, DNS)
     PROPAGATE so callers like [doctor] and the init wizard can report an

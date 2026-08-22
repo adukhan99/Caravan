@@ -27,6 +27,20 @@ The runtime is Eio-based (structured concurrency).  JSON is handled via
 
 ---
 
+### 1.1  Operating Philosophy ("Move Like Claude")
+
+When contributing to or refactoring Caravan, adopt a disciplined, high-latent-layer problem-solving approach:
+
+1. **Investigate Ground Truth First**: Never make assumptions or apply band-aid fixes based solely on visual symptoms. When an agent or REPL stalls, run background diagnostics, capture raw SSE streams, or trace Eio fiber execution to observe real runtime behavior.
+2. **Abstract Space Over Enumeration**: Address systemic issues through typed, domain-level abstractions and architectural patterns rather than enumerating special-case conditionals.
+3. **Strict Separation of Concerns in Streaming**:
+   - **Connection State**: Treat HTTP 2xx response headers as connection success rather than keying success on text-token emission.
+   - **UI Streaming**: Stream interactive feedback (such as reasoning/thinking tokens inside `<thought>` blocks) on-token to keep the user interface responsive.
+   - **Prompt History**: Maintain clean message buffers (`buf`) for turn history—never leak UI stream artifacts or ephemeral thinking tokens into stored LLM context.
+4. **Surgical Respect for Idioms**: Strictly adhere to functional OCaml 5.1+ conventions: zero object-orientation, immutable state (`Session.t`), GADT packed existentials, algebraic effects for side-effects, structured error handling (`Caravan_error`), and 2-space column-aligned formatting.
+
+---
+
 ## 2  Repository Layout
 
 ```

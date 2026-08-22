@@ -196,6 +196,13 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
     let extra_content_ref = ref None in
     let usage_ref = ref None in
     let result_ref = ref None in
+    let in_reasoning = ref false in
+    let close_reasoning () =
+      if !in_reasoning then begin
+        in_reasoning := false;
+        wrapped_on_token "\n</thought>\n\n"
+      end
+    in
     Eio.Switch.run @@ fun sw ->
     let (resp, body) =
       Cohttp_eio.Client.post client ~sw ~headers
@@ -216,6 +223,7 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
         if String.length line > 6 && String.sub line 0 6 = "data: " then begin
           let data = String.sub line 6 (String.length line - 6) in
           if data = "[DONE]" then begin
+            close_reasoning ();
             let full = Buffer.contents buf in
             let tool_calls =
               if Hashtbl.length tool_acc = 0 then None
@@ -244,13 +252,31 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
                 (match delta |> member "extra_content" with
                  | `Null -> ()
                  | ec -> extra_content_ref := Some ec);
-                (match delta |> member "content" with
-                 | `String token ->
-                   Buffer.add_string buf token;
-                   wrapped_on_token token
-                 | _ -> ());
+                let reasoning_opt =
+                  match delta |> member "reasoning" with
+                  | `String s when s <> "" -> Some s
+                  | _ ->
+                    match delta |> member "reasoning_content" with
+                    | `String s when s <> "" -> Some s
+                    | _ -> None
+                in
+                (match reasoning_opt with
+                 | Some rtoken ->
+                   if not !in_reasoning then begin
+                     in_reasoning := true;
+                     wrapped_on_token "<thought>\n"
+                   end;
+                   wrapped_on_token rtoken
+                 | None ->
+                   (match delta |> member "content" with
+                    | `String token when token <> "" ->
+                      close_reasoning ();
+                      Buffer.add_string buf token;
+                      wrapped_on_token token
+                    | _ -> ()));
                 (match delta |> member "tool_calls" with
                  | `List tcs ->
+                   if tcs <> [] then close_reasoning ();
                    List.iter (fun tc ->
                      let idx = tc |> member "index" |> to_int in
                      let (id, name, abuf, tc_ec) =
@@ -291,6 +317,7 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
         end
       done
     with End_of_file -> ());
+    close_reasoning ();
     match !result_ref with
     | Some r -> r
     | None ->
@@ -305,9 +332,18 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
           ) sorted)
         end
       in
-      let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
-      wrap_result ~raw_response:full ~model:effective_model ~provider:cfg.provider_name
-        ?usage:(!usage_ref) reply
+      (* Guard against a stalled/truncated stream: if the server closed the
+         connection before sending [DONE] and we have neither content nor tool
+         calls, raise rather than returning an empty message.  An empty reply
+         would make [is_finished] return false and spin the agent loop forever. *)
+      if full = "" && tool_calls = None then
+        Caravan.Caravan_error.raise_provider_failure
+          ~provider:cfg.provider_name ~status:200
+          ~body:"Stream closed without [DONE] and without content"
+      else
+        let reply = make_message ?tool_calls ?extra_content:(!extra_content_ref) Assistant full in
+        wrap_result ~raw_response:full ~model:effective_model ~provider:cfg.provider_name
+          ?usage:(!usage_ref) reply
   in
   try
     try_stream ()

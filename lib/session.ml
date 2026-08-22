@@ -216,7 +216,7 @@ let run_turn_step ?max_turns ?on_turn net clock sess (reply : chat_message) =
   let final_memory = Memory.Mem ((module M), M.add mem reply) in
   let new_sess = { sess with memory = final_memory; turn_idx = sess.turn_idx + 1 } in
   (match on_turn with
-   | Some f -> f new_sess.turn_idx (Option.value ~default:10 max_turns)
+   | Some f -> f new_sess.turn_idx (Option.value ~default:0 max_turns)
    | None -> ());
   match reply.tool_calls with
   | Some tcs when tcs <> [] ->
@@ -260,7 +260,7 @@ let run_turn_step ?max_turns ?on_turn net clock sess (reply : chat_message) =
       Done (sess_after_sum, final_content, Via_finish_tool)
     else
       (match max_turns with
-       | Some max_t when sess_after_sum.turn_idx >= max_t ->
+       | Some max_t when max_t > 0 && sess_after_sum.turn_idx >= max_t ->
          Done (sess_after_sum, "Maximum turns reached without completion.", Via_max_turns)
        | _ ->
          Continue sess_after_sum)

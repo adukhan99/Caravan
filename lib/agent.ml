@@ -44,7 +44,7 @@ let nudge_text ~task ~used ~max_turns =
 
 let continue_prompt_for config ~task ~used =
   let base = config.continue_prompt in
-  if not config.nudge then base
+  if not config.nudge || config.max_turns <= 0 then base
   else begin
     let half = config.max_turns / 2 in
     let near_end = config.max_turns - used <= 2 in
@@ -57,14 +57,15 @@ let continue_prompt_for config ~task ~used =
 
 let run_generic ?config ?on_turn run_fn sess task =
   let config = match config with Some c -> c | None -> default_config () in
+  let max_turns = if config.max_turns <= 0 then None else Some config.max_turns in
   let rec loop sess =
-    if Session.turn_idx sess >= config.max_turns then
+    if config.max_turns > 0 && Session.turn_idx sess >= config.max_turns then
       Error "Maximum turns reached without completion."
     else begin
-      let (sess', result) = run_fn ?max_turns:(Some config.max_turns) ?on_turn sess in
+      let (sess', result) = run_fn ?max_turns ?on_turn sess in
       if is_finished result then
         Ok (sess', result)
-      else if Session.turn_idx sess' >= config.max_turns then
+      else if config.max_turns > 0 && Session.turn_idx sess' >= config.max_turns then
         Error "Maximum turns reached without completion."
       else
         let prompt = continue_prompt_for config ~task ~used:(Session.turn_idx sess') in

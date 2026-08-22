@@ -281,7 +281,8 @@ let handle_slash_command net clock st line =
       println_ansi (rule ~title:"Agent" ());
       println_ansi (Printf.sprintf "  %s %s" (dim "task:") (white task));
       let on_turn current max =
-        println_ansi (dim (Printf.sprintf "  ── turn %d/%d ──" current max))
+        let max_str = if max <= 0 then "∞" else string_of_int max in
+        println_ansi (dim (Printf.sprintf "  ── turn %d/%s ──" current max_str))
       in
       (try
         let stream_enabled = Config.get_stream () in
@@ -857,7 +858,8 @@ let run_agent model_cli provider_cli base_url_cli system max_turns quiet json_ou
     in
     let on_turn current max =
       if not quiet && is_tty then
-        println_ansi (dim (Printf.sprintf "  ── turn %d/%d ──" current max))
+        let max_str = if max <= 0 then "∞" else string_of_int max in
+        println_ansi (dim (Printf.sprintf "  ── turn %d/%s ──" current max_str))
     in
     let stream_enabled = Config.get_stream () && not quiet && not json_out in
     let result =

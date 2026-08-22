@@ -746,7 +746,20 @@ let%test_unit "agent_turn_increment_and_max_turns" =
     let res_low = Agent.run ~config:agent_cfg_low ~on_turn env#net env#clock sess2 "Task max turns test" in
     (match res_low with
      | Error "Maximum turns reached without completion." -> ()
-     | _ -> failwith "Expected max turns error")
+     | _ -> failwith "Expected max turns error");
+
+    (* Test max_turns = 0 (infinite / unlimited turns override) *)
+    call_count := 0;
+    turn_calls := [];
+    let sess3 = Session.create ~tools:[finish_tool; read_tool] "multi" provider
+                |> Session.with_spinner_config { enabled = false; get_verb = fun _ -> "mock" } in
+    let agent_cfg_inf = Agent.{ max_turns = 0; continue_prompt = "continue"; nudge = false } in
+    let res_inf = Agent.run ~config:agent_cfg_inf ~on_turn env#net env#clock sess3 "Task infinite max turns test" in
+    (match res_inf with
+     | Ok (final_sess, _meta) ->
+       assert (Session.turn_idx final_sess = 3);
+       assert (List.rev !turn_calls = [(1, 0); (2, 0); (3, 0)])
+     | Error msg -> failwith ("Infinite max_turns failed: " ^ msg))
   )
 
 (* ── Overhaul regression & feature tests ─────────────────────────────── *)

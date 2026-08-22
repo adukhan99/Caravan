@@ -357,6 +357,14 @@ with exn ->
 `Caravan_error.safe_run` wraps a thunk, catching everything **except**
 `Eio.Cancel.Cancelled` (which must always propagate).
 
+### 6.4  Provider Error Handling & Structured Exceptions
+
+Providers must parse raw HTTP error response bodies into structured domain errors at the provider boundary rather than formatting exceptions into raw unstructured strings (`failwith`).
+
+- Define structured exception variants in `Caravan_error` (such as `Caravan_error.Provider_failure` containing `provider`, `status`, `body`, and `detail`).
+- Raise structured exceptions using `Caravan_error.raise_provider_failure` directly from provider clients when receiving non-2xx HTTP responses.
+- `Caravan_error.humanize` pattern-matches on `Provider_failure` directly, presenting clean messages with actionable user hints without scraping raw exception strings.
+
 ---
 
 ## 7  Testing
@@ -507,6 +515,16 @@ let get_provider ctx =
   let k = Key.create () in  (* BUG: this is a fresh key every call! *)
   Plugin.get ctx k
 ```
+
+### ❌ String-scraping raw exception strings for error recovery
+
+**Wrong**: Formatting structured HTTP error JSON into string exceptions (`failwith "error 400: {...}"`) and using string indexing/slice searching (`String.index str '{'`) to extract the JSON payload in error handlers.
+**Right**: Parse response payloads into structured domain types (`provider_error_detail`) at the provider boundary when the HTTP response arrives, and raise structured exception variants (`Caravan_error.Provider_failure`).
+
+### ❌ Unsafe `Yojson.Safe.Util.member` chaining on nullable fields
+
+**Wrong**: Chaining `Yojson.Safe.Util.member "field"` on values that may be `` `Null `` or non-associative objects (e.g. `json |> member "metadata" |> member "raw"`), which throws unhandled `Yojson.Safe.Util.Type_error` exceptions.
+**Right**: Use safe member lookup helper functions or `Parser.permissive_json` combinators to parse and extract JSON fields safely.
 
 ---
 

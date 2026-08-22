@@ -184,11 +184,12 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
   let headers  = Http.Header.of_list (("Accept", "text/event-stream") :: auth_headers cfg) in
   let body_str = Yojson.Safe.to_string (make_body cfg ?model ?options ?tools msgs ~stream:true) in
   let client   = make_client net uri in
-  let tokens_emitted = ref false in
-  let wrapped_on_token token =
-    tokens_emitted := true;
-    on_token token
-  in
+  (* Track whether the SSE connection was established successfully (HTTP 2xx).
+     This is what determines whether the fallback should fire — not whether
+     text tokens were emitted, since tool-call-only turns have zero text tokens
+     but are still perfectly valid streaming responses. *)
+  let stream_succeeded = ref false in
+  let wrapped_on_token token = on_token token in
   let try_stream () =
     let buf      = Buffer.create 4096 in
     let tool_acc : (int, string * string * Buffer.t * Yojson.Safe.t option) Hashtbl.t = Hashtbl.create 4 in
@@ -206,6 +207,8 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
       log_structured_error cfg.provider_name status err;
       Caravan.Caravan_error.raise_provider_failure ~provider:cfg.provider_name ~status ~body:err
     end;
+    (* HTTP 2xx — the stream is live; disable the fallback from here on. *)
+    stream_succeeded := true;
     let buf_r = Eio.Buf_read.of_flow body ~max_size:max_int in
     (try
       while true do
@@ -310,10 +313,10 @@ let stream net cfg ?model ?options ?tools msgs ~on_token =
     try_stream ()
   with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
-  | exn when not !tokens_emitted ->
+  | exn when not !stream_succeeded ->
     let human_err = Caravan.Caravan_error.humanize exn in
     let single_line_err = String.concat " " (String.split_on_char '\n' human_err) in
-    Caravan.Trace.log "warn" "[%s] Streaming failed; falling back to non-streaming completion... (%s)"
+    Caravan.Trace.log "warn" "[%s] Streaming failed before connection; falling back to non-streaming completion... (%s)"
       cfg.provider_name single_line_err;
     complete net cfg ?model ?options ?tools msgs
 

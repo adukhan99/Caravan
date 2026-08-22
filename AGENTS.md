@@ -526,6 +526,11 @@ let get_provider ctx =
 **Wrong**: Chaining `Yojson.Safe.Util.member "field"` on values that may be `` `Null `` or non-associative objects (e.g. `json |> member "metadata" |> member "raw"`), which throws unhandled `Yojson.Safe.Util.Type_error` exceptions.
 **Right**: Use safe member lookup helper functions or `Parser.permissive_json` combinators to parse and extract JSON fields safely.
 
+### ❌ Keying a streaming fallback guard on text-token emission
+
+**Wrong**: Tracking whether `on_token` was called (`tokens_emitted`) to decide if a stream "succeeded" before triggering a fallback. Tool-call-only responses from the LLM emit zero content tokens, so this flag stays `false` on every agentic tool-use turn — causing the fallback to fire silently on every tool call, doubling request volume and producing no streamed output.
+**Right**: Set a `stream_succeeded` flag immediately after receiving an HTTP 2xx response header. The fallback should only fire when the *connection* failed (before any SSE data), not when the response body happened to contain no text.
+
 ---
 
 ## 9  Configuration Resolution Order
